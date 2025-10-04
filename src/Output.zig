@@ -85,6 +85,23 @@ fn create(ctx: ?*c.struct_obs_data, ptr: ?*c.struct_obs_output) callconv(.c) ?*a
     };
     self.gpa = self.gpa_impl.allocator();
 
+    instance = self;
+    return self;
+}
+
+fn destroy(ctx: ?*anyopaque) callconv(.c) void {
+    c.blog(c.LOG_INFO, "zobscast destroy");
+    const self: *@This() = @ptrCast(@alignCast(ctx.?));
+
+    var alloc = self.gpa_impl;
+    alloc.allocator().destroy(self);
+    _ = alloc.deinit();
+}
+
+fn start(ctx: ?*anyopaque) callconv(.c) bool {
+    c.blog(c.LOG_INFO, "zobscast start");
+    const self: *@This() = @ptrCast(@alignCast(ctx.?));
+
     _ = std.process.Child.run(.{
         .allocator = self.gpa,
         .argv = &.{ "rm", "-f", "/tmp/mkchromecast.fifo.mp4" },
@@ -108,22 +125,7 @@ fn create(ctx: ?*c.struct_obs_data, ptr: ?*c.struct_obs_output) callconv(.c) ?*a
         // \\-pix_fmt yuv420p
     }, self.gpa);
     self.proc.?.spawn() catch @panic("mkchromecast spawn");
-    instance = self;
-    return self;
-}
 
-fn destroy(ctx: ?*anyopaque) callconv(.c) void {
-    c.blog(c.LOG_INFO, "zobscast destroy");
-    const self: *@This() = @ptrCast(@alignCast(ctx.?));
-
-    var alloc = self.gpa_impl;
-    alloc.allocator().destroy(self);
-    _ = alloc.deinit();
-}
-
-fn start(ctx: ?*anyopaque) callconv(.c) bool {
-    c.blog(c.LOG_INFO, "zobscast start");
-    const self: *@This() = @ptrCast(@alignCast(ctx.?));
     self.active = true;
     return self.active;
 }
@@ -138,6 +140,8 @@ fn stop(ctx: ?*anyopaque, it: u64) callconv(.c) void {
     }
 
     if (self.fifo) |fifo| {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         fifo.close();
         _ = std.process.Child.run(.{
             .allocator = self.gpa,
@@ -154,8 +158,9 @@ fn stop(ctx: ?*anyopaque, it: u64) callconv(.c) void {
 
 fn get_data(ctx: ?*anyopaque, d: [*c]c.struct_encoder_packet) callconv(.c) void {
     const self: *@This() = @ptrCast(@alignCast(ctx.?));
-    if (d == null) {
+    if ((!self.active) or d == null) {
         c.obs_output_signal_stop(self.ptr, c.OBS_OUTPUT_ENCODE_ERROR);
+        return;
     }
     // c.blog(
     //     c.LOG_INFO,
