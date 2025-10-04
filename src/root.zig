@@ -6,7 +6,13 @@ const Source = @import("Source.zig");
 export fn obs_module_load() callconv(.c) bool {
     c.obs_register_output(&Output.info);
     c.obs_register_source(&Source.info);
+    c.obs_frontend_add_event_callback(OBSEvent, null);
     return true;
+}
+
+fn OBSEvent(ev: c_uint, ctx: ?*anyopaque) callconv(.c) void {
+    c.blog(c.LOG_INFO, "zobscast frontend event: %d", ev);
+    _ = ctx;
 }
 
 var obs_module_pointer: *c.obs_module_t = undefined;

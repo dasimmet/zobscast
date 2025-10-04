@@ -13,17 +13,17 @@ pub fn build(b: *std.Build) void {
         .linkage = .dynamic,
     });
     b.installArtifact(lib);
-    // lib.linkSystemLibrary("obs");
 
     const obs = b.dependency("obs", .{});
     const c_head = b.addTranslateC(.{
-        .root_source_file = obs.path("libobs/obs-module.h"),
+        // .root_source_file = obs.path("libobs/obs-module.h"),
+        .root_source_file = b.path("src/obs_api.h"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
     });
-    c_head.out_basename = "obs_module.zig";
     c_head.addIncludePath(obs.path("libobs"));
+    c_head.addIncludePath(obs.path("frontend/api"));
     const obsconfig = b.addConfigHeader(.{
         .style = .{ .cmake = obs.path("libobs/obsconfig.h.in") },
     }, .{

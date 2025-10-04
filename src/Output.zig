@@ -1,7 +1,7 @@
 const c = @import("c");
 const std = @import("std");
 
-pub const info = c.struct_obs_output_info{
+pub const info = c.obs_output_info{
     .id = "zobscast",
     .flags = c.OBS_OUTPUT_VIDEO,
     .get_name = name,
@@ -29,6 +29,7 @@ fn create(ctx: ?*c.struct_obs_data, ptr: ?*c.struct_obs_output) callconv(.c) ?*a
     return null;
 }
 fn destroy(ctx: ?*anyopaque) callconv(.c) void {
+    c.blog(c.LOG_INFO, "zobscast destroy");
     _ = ctx;
 }
 
