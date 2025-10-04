@@ -24,7 +24,7 @@ fn OBSEvent(ev: c_uint, ctx: ?*anyopaque) callconv(.c) void {
     c.blog(c.LOG_INFO, "zobscast frontend event: %d %s", ev, @tagName(evt).ptr);
     switch (evt) {
         .FINISHED_LOADING => {
-            Output.autostart() catch unreachable;
+            c.obs_frontend_add_tools_menu_item("toggle zobscast output", Output.toggle, null);
         },
         else => {},
     }
