@@ -12,7 +12,22 @@ pub fn build(b: *std.Build) void {
         }),
         .linkage = .dynamic,
     });
-    b.installArtifact(lib);
+
+    const ext_install = b.addInstallBinFile(lib.getEmittedBin(), b.fmt(
+        "{d}bit/{s}{s}",
+        .{
+            target.result.ptrBitWidth(),
+            lib.name,
+            target.result.dynamicLibSuffix(),
+        },
+    ));
+
+    b.getInstallStep().dependOn(&ext_install.step);
+    b.installDirectory(.{
+        .source_dir = b.path("data"),
+        .install_dir = .prefix,
+        .install_subdir = "data",
+    });
 
     const obs = b.dependency("obs", .{});
     const c_head = b.addTranslateC(.{

@@ -24,7 +24,8 @@ fn OBSEvent(ev: c_uint, ctx: ?*anyopaque) callconv(.c) void {
     c.blog(c.LOG_INFO, "zobscast frontend event: %d %s", ev, @tagName(evt).ptr);
     switch (evt) {
         .FINISHED_LOADING => {
-            c.obs_frontend_add_tools_menu_item("toggle zobscast output", Output.toggle, null);
+            const toogle_local: [*c]const u8 = obs_module_text("Zobscast.Toggle");
+            c.obs_frontend_add_tools_menu_item(toogle_local, Output.toggle, null);
         },
         else => {},
     }
@@ -41,6 +42,24 @@ export fn obs_current_module() *c.obs_module_t {
 
 export fn obs_module_ver() callconv(.c) c_uint {
     return c.LIBOBS_API_VER;
+}
+
+var obs_module_lookup: ?*c.lookup_t = null;
+export fn obs_module_set_locale(locale: [*c]const u8) callconv(.c) void {
+    if (obs_module_lookup) |lookup|
+        c.text_lookup_destroy(lookup);
+    obs_module_lookup = c.obs_module_load_locale(obs_current_module(), "en-US", locale);
+}
+
+export fn obs_module_free_locale() callconv(.c) void {
+    c.text_lookup_destroy(obs_module_lookup);
+    obs_module_lookup = null;
+}
+
+fn obs_module_text(val: [*c]const u8) callconv(.c) [*c]const u8 {
+    var out: [*c]const u8 = val;
+    _ = c.text_lookup_getstr(obs_module_lookup, val, &out);
+    return out;
 }
 
 // Generates an enum from all decls prefixed with 'decl_prefix'
