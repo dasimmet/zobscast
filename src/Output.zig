@@ -28,8 +28,10 @@ pub const info: c.obs_output_info = .{
 var instance: ?*@This() = null;
 
 pub fn toggle(ctx: ?*anyopaque) callconv(.c) void {
+    c.blog(c.LOG_INFO, "zobscast toggle");
     _ = ctx;
     if (instance) |inst| {
+        c.obs_output_end_data_capture(inst.ptr);
         c.obs_output_signal_stop(inst.ptr, c.OBS_OUTPUT_SUCCESS);
     } else {
         autostart() catch @panic("zobscast toggle");
@@ -96,6 +98,8 @@ fn destroy(ctx: ?*anyopaque) callconv(.c) void {
     var alloc = self.gpa_impl;
     alloc.allocator().destroy(self);
     _ = alloc.deinit();
+    instance = null;
+    c.blog(c.LOG_INFO, "zobscast destroy finished");
 }
 
 fn start(ctx: ?*anyopaque) callconv(.c) bool {
@@ -151,9 +155,15 @@ fn stop(ctx: ?*anyopaque, it: u64) callconv(.c) void {
     }
 
     if (self.proc) |*proc| {
-        std.posix.kill(proc.id, std.posix.SIG.KILL) catch {};
+        std.posix.kill(proc.id, std.posix.SIG.KILL) catch |err| {
+            c.blog(c.LOG_ERROR, "zobscast kill: %s", @errorName(err).ptr);
+        };
+        _ = proc.wait() catch |err| {
+            c.blog(c.LOG_ERROR, "zobscast kill: %s", @errorName(err).ptr);
+        };
         self.proc = null;
     }
+    destroy(ctx);
 }
 
 fn get_data(ctx: ?*anyopaque, d: [*c]c.struct_encoder_packet) callconv(.c) void {
