@@ -1,6 +1,8 @@
 .{
     .name = .zobscast,
     .version = "0.0.1",
+    .minimum_zig_version = "0.15.2",
+    .fingerprint = 0xedfe3c995eb92b07,
     .dependencies = .{
         .obs = .{
             .url = "git+https://github.com/obsproject/obs-studio.git#0b1229632063a13dfd26cf1cd9dd43431d8c68f6",
@@ -11,7 +13,5 @@
             .hash = "N-V-__8AAC8TdAMeaXYjT-T6htgpZVpbiz7jJkuTtSU9kCD5",
         },
     },
-    .minimum_zig_version = "0.15.1",
     .paths = .{""},
-    .fingerprint = 0xedfe3c995eb92b07,
 }
