@@ -5,6 +5,7 @@ const Server = @import("stream/Server.zig").Server;
 const Discovery = @import("cast/Discovery.zig").Discovery;
 const Device = @import("cast/Discovery.zig").Device;
 const CastClient = @import("cast/Client.zig").Client;
+const Output = @This();
 
 ptr: *c.obs_output_t,
 settings: ?*c.obs_data_t = null,
@@ -15,12 +16,11 @@ muxer: ?*Muxer = null,
 cast_client: ?*CastClient = null,
 connect_thread: ?std.Thread = null,
 mutex: std.atomic.Mutex = .unlocked,
+discovery_mutex: std.atomic.Mutex = .unlocked,
+debug_logging: bool = false,
+packet_count: usize = 0,
 allocator: std.mem.Allocator,
-
-var global_discovery: ?*Discovery = null;
-var discovery_mutex: std.atomic.Mutex = .unlocked;
-pub var debug_logging: bool = false;
-var packet_count: usize = 0;
+discovery: ?Discovery = null,
 
 pub const info: c.obs_output_info = .{
     .id = "zobscast",
@@ -37,26 +37,26 @@ pub const info: c.obs_output_info = .{
     .encoded_video_codecs = "h264",
 };
 
-fn ensureDiscovery() void {
-    while (!discovery_mutex.tryLock()) {
+fn ensureDiscovery(self: *Output) void {
+    while (!self.discovery_mutex.tryLock()) {
         std.Thread.yield() catch {};
     }
-    defer discovery_mutex.unlock();
+    defer self.discovery_mutex.unlock();
 
-    if (global_discovery == null) {
-        global_discovery = Discovery.init(std.heap.c_allocator) catch null;
+    if (self.discovery == null) {
+        self.discovery = Discovery.init(std.heap.c_allocator);
     }
 }
 
-pub fn deinitDiscovery() void {
-    while (!discovery_mutex.tryLock()) {
+pub fn deinitDiscovery(self: *Output) void {
+    while (!self.discovery_mutex.tryLock()) {
         std.Thread.yield() catch {};
     }
-    defer discovery_mutex.unlock();
+    defer self.discovery_mutex.unlock();
 
-    if (global_discovery) |disc| {
+    if (self.discovery) |*disc| {
         disc.deinit();
-        global_discovery = null;
+        self.discovery = null;
     }
 }
 
@@ -200,7 +200,8 @@ fn name(ctx: ?*anyopaque) callconv(.c) [*c]const u8 {
 
 fn create(settings: ?*c.struct_obs_data, ptr: ?*c.struct_obs_output) callconv(.c) ?*anyopaque {
     c.blog(c.LOG_INFO, "zobscast create");
-    const self = std.heap.c_allocator.create(@This()) catch @panic("zobscast create alloc error");
+    const self = std.heap.c_allocator.create(Output) catch @panic("zobscast create alloc error");
+
     self.* = .{
         .ptr = ptr.?,
         .settings = settings,
@@ -225,7 +226,7 @@ fn create(settings: ?*c.struct_obs_data, ptr: ?*c.struct_obs_output) callconv(.c
 
 fn destroy(ctx: ?*anyopaque) callconv(.c) void {
     c.blog(c.LOG_INFO, "zobscast destroy");
-    const self: *@This() = @ptrCast(@alignCast(ctx.?));
+    const self: *Output = @ptrCast(@alignCast(ctx.?));
 
     stop(ctx, 0);
 
@@ -241,15 +242,15 @@ fn destroy(ctx: ?*anyopaque) callconv(.c) void {
 }
 
 fn update(ctx: ?*anyopaque, settings: ?*c.obs_data_t) callconv(.c) void {
-    const self: *@This() = @ptrCast(@alignCast(ctx.?));
+    const self: *Output = @ptrCast(@alignCast(ctx.?));
     if (settings) |s| {
         self.applySettings(s);
         saveSettings(s);
     }
 }
 
-fn applySettings(self: *@This(), settings: *c.obs_data_t) void {
-    debug_logging = c.obs_data_get_bool(settings, "debug_logging");
+fn applySettings(self: *Output, settings: *c.obs_data_t) void {
+    self.debug_logging = c.obs_data_get_bool(settings, "debug_logging");
     const sink_str = c.obs_data_get_string(settings, "sink");
     if (sink_str != null and sink_str[0] != 0) {
         const slice = std.mem.span(sink_str);
@@ -301,8 +302,8 @@ pub fn get_properties(ctx: ?*anyopaque) callconv(.c) ?*c.obs_properties_t {
     );
 
     // Initial mDNS discovery if needed
-    ensureDiscovery();
-    if (global_discovery) |disc| {
+    self.ensureDiscovery();
+    if (self.discovery) |*disc| {
         disc.scan(800) catch {};
 
         var dev_list: std.ArrayList(Device) = .empty;
@@ -363,10 +364,10 @@ pub fn get_properties(ctx: ?*anyopaque) callconv(.c) ?*c.obs_properties_t {
 fn refreshClicked(props: ?*c.obs_properties_t, property: ?*c.obs_property_t, data: ?*anyopaque) callconv(.c) bool {
     _ = props;
     _ = property;
-    _ = data;
+    const self: *Output = @ptrCast(@alignCast(data));
     c.blog(c.LOG_INFO, "zobscast scanning for devices...");
-    ensureDiscovery();
-    if (global_discovery) |disc| {
+    self.ensureDiscovery();
+    if (self.discovery) |*disc| {
         disc.scan(1500) catch |err| {
             c.blog(c.LOG_ERROR, "zobscast discovery error: %s", @errorName(err).ptr);
         };
@@ -376,7 +377,7 @@ fn refreshClicked(props: ?*c.obs_properties_t, property: ?*c.obs_property_t, dat
 
 fn start(ctx: ?*anyopaque) callconv(.c) bool {
     c.blog(c.LOG_INFO, "zobscast start");
-    const self: *@This() = @ptrCast(@alignCast(ctx.?));
+    const self: *Output = @ptrCast(@alignCast(ctx.?));
 
     while (!self.mutex.tryLock()) {
         std.Thread.yield() catch {};
@@ -415,7 +416,7 @@ fn start(ctx: ?*anyopaque) callconv(.c) bool {
     return true;
 }
 
-fn connectThread(self: *@This()) void {
+fn connectThread(self: *Output) void {
     while (!self.mutex.tryLock()) {
         std.Thread.yield() catch {};
     }
@@ -441,8 +442,8 @@ fn connectThread(self: *@This()) void {
 
     // Fallback: pick first discovered device if none chosen
     if (raw_target.len == 0) {
-        ensureDiscovery();
-        if (global_discovery) |disc| {
+        self.ensureDiscovery();
+        if (self.discovery) |*disc| {
             disc.scan(1000) catch {};
             while (!disc.mutex.tryLock()) {
                 std.Thread.yield() catch {};
@@ -571,7 +572,7 @@ fn connectThread(self: *@This()) void {
 
 fn onMuxedData(ctx: ?*anyopaque, data: []const u8) void {
     if (ctx == null) return;
-    const self: *@This() = @ptrCast(@alignCast(ctx.?));
+    const self: *Output = @ptrCast(@alignCast(ctx.?));
     if (self.server) |srv| {
         srv.broadcast(data);
     }
@@ -580,7 +581,7 @@ fn onMuxedData(ctx: ?*anyopaque, data: []const u8) void {
 fn stop(ctx: ?*anyopaque, it: u64) callconv(.c) void {
     _ = it;
     c.blog(c.LOG_INFO, "zobscast stop");
-    const self: *@This() = @ptrCast(@alignCast(ctx.?));
+    const self: *Output = @ptrCast(@alignCast(ctx.?));
 
     // Wait for any in-progress connection attempt to finish.
     // Must NOT hold self.mutex while joining — connectThread also locks it.
@@ -616,21 +617,22 @@ fn stop(ctx: ?*anyopaque, it: u64) callconv(.c) void {
         self.server = null;
     }
 
+    self.deinitDiscovery();
     c.obs_output_signal_stop(self.ptr, c.OBS_OUTPUT_SUCCESS);
 }
 
 fn get_data(ctx: ?*anyopaque, d: [*c]c.struct_encoder_packet) callconv(.c) void {
-    const self: *@This() = @ptrCast(@alignCast(ctx.?));
+    const self: *Output = @ptrCast(@alignCast(ctx.?));
     if (!self.active or d == null or d.*.data == null or d.*.size == 0) {
         return;
     }
 
-    packet_count +%= 1;
-    if (debug_logging and (packet_count % 120 == 0)) {
+    self.packet_count +%= 1;
+    if (self.debug_logging and (self.packet_count % 120 == 0)) {
         c.blog(
             c.LOG_INFO,
             "zobscast packet #%u: size=%u pts=%ld dts=%ld keyframe=%d",
-            @as(c_uint, @intCast(packet_count)),
+            @as(c_uint, @intCast(self.packet_count)),
             @as(c_uint, @intCast(d.*.size)),
             d.*.pts,
             d.*.dts,

@@ -28,12 +28,10 @@ pub const Discovery = struct {
     allocator: std.mem.Allocator,
     mutex: std.atomic.Mutex = .unlocked,
 
-    pub fn init(allocator: std.mem.Allocator) !*Discovery {
-        const self = try allocator.create(Discovery);
-        self.* = .{
+    pub fn init(allocator: std.mem.Allocator) Discovery {
+        return .{
             .allocator = allocator,
         };
-        return self;
     }
 
     pub fn scan(self: *Discovery, timeout_ms: c_int) !void {
@@ -270,7 +268,6 @@ pub const Discovery = struct {
         }
         self.devices.deinit(self.allocator);
         self.mutex.unlock();
-        self.allocator.destroy(self);
     }
 };
 

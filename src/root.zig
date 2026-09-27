@@ -33,8 +33,6 @@ export fn obs_module_unload() callconv(.c) void {
         }
         c.obs_output_release(out);
     }
-
-    Output.deinitDiscovery();
 }
 
 pub fn openOptions(ctx: ?*anyopaque) callconv(.c) void {
