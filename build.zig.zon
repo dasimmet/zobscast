@@ -9,8 +9,12 @@
             .hash = "N-V-__8AAA2pVwIeSnpH_uzeikg7rCVvxOXXK0gno1lrEAij",
         },
         .ffmpeg = .{
-            .url = "git+https://github.com/allyourcodebase/ffmpeg#84ae6daa5f2fb467c3541b6f6be4c9b386359436",
-            .hash = "ffmpeg-7.0.1-10-zT7QAzaLCASuyyl7vUb7iyjr9nP7WcGnJp40ytR7WJij",
+            .url = "git+https://github.com/dasimmet/ffmpeg?ref=zobscast#51ef8bd00505f6441f321f260cb6065d8f9a938a",
+            .hash = "ffmpeg-7.0.1-10-zT7QA2uLCAQ-2mynSKUIMQeU1oY7vOfBGJayK04EgnVU",
+        },
+        .simde = .{
+            .url = "git+https://github.com/simd-everywhere/simde.git#dd8be31aad193e7e8668f992132e09a0651657e1",
+            .hash = "N-V-__8AAC8TdAMeaXYjT-T6htgpZVpbiz7jJkuTtSU9kCD5",
         },
     },
     .paths = .{""},

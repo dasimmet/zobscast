@@ -5,10 +5,15 @@ const Source = @import("Source.zig");
 
 const ObsFrontendEvent = CTranslateEnum(c, c_int, "OBS_FRONTEND_EVENT_");
 
+var options_source: ?*c.obs_source_t = null;
+
 export fn obs_module_load() callconv(.c) bool {
     c.blog(c.LOG_INFO, "zobscast module_load");
+    c.blog(c.LOG_INFO, "zobscast obs_register_output");
     c.obs_register_output(&Output.info);
+    c.blog(c.LOG_INFO, "zobscast obs_register_source");
     c.obs_register_source(&Source.info);
+    c.blog(c.LOG_INFO, "zobscast obs_frontend_add_event_callback");
     c.obs_frontend_add_event_callback(OBSEvent, null);
     return true;
 }
@@ -16,27 +21,60 @@ export fn obs_module_load() callconv(.c) bool {
 export fn obs_module_unload() callconv(.c) void {
     c.blog(c.LOG_INFO, "zobscast module_unload");
     c.obs_frontend_remove_event_callback(OBSEvent, null);
+
+    if (options_source) |s| {
+        c.obs_source_release(s);
+        options_source = null;
+    }
+
+    const output = c.obs_get_output_by_name(Output.info.id);
+    if (output) |out| {
+        if (c.obs_output_active(out)) {
+            c.obs_output_stop(out);
+        }
+        c.obs_output_release(out);
+        c.obs_output_release(out);
+    }
+
+    Output.deinitDiscovery();
+}
+
+pub fn openOptions(ctx: ?*anyopaque) callconv(.c) void {
+    _ = ctx;
+    c.blog(c.LOG_INFO, "zobscast openOptions");
+    if (options_source == null) {
+        const saved_settings = Output.loadSettings();
+        const settings = saved_settings orelse c.obs_data_create();
+        defer c.obs_data_release(settings);
+        Output.get_defaults(settings);
+        options_source = c.obs_source_create_private(Source.info.id, "Zobscast Settings", settings);
+    }
+    if (options_source) |s| {
+        c.obs_frontend_open_source_properties(s);
+    }
 }
 
 fn OBSEvent(ev: c_uint, ctx: ?*anyopaque) callconv(.c) void {
     _ = ctx;
     const evt: ObsFrontendEvent = @enumFromInt(ev);
-    c.blog(c.LOG_INFO, "zobscast frontend event: %d %s", ev, @tagName(evt).ptr);
+    c.blog(c.LOG_INFO, "zobscast frontend event: %u %s", ev, @tagName(evt).ptr);
     switch (evt) {
         .FINISHED_LOADING => {
-            const toogle_local: [*c]const u8 = obs_module_text("Zobscast.Toggle");
-            c.obs_frontend_add_tools_menu_item(toogle_local, Output.toggle, null);
+            const toggle_local: [*c]const u8 = obs_module_text("Zobscast.Toggle");
+            c.obs_frontend_add_tools_menu_item(toggle_local, Output.toggle, null);
+            const options_local: [*c]const u8 = obs_module_text("Zobscast.Options");
+            c.obs_frontend_add_tools_menu_item(options_local, openOptions, null);
         },
         else => {},
     }
 }
 
 var obs_module_pointer: *c.obs_module_t = undefined;
-export fn obs_module_set_pointer(module: *c.obs_module_t) void {
+pub export fn obs_module_set_pointer(module: *c.obs_module_t) void {
     obs_module_pointer = module;
 }
 
-export fn obs_current_module() *c.obs_module_t {
+pub export fn obs_current_module() *c.obs_module_t {
     return obs_module_pointer;
 }
 
@@ -68,35 +106,33 @@ fn CTranslateEnum(comptime c_struct: type, comptime inttype: type, comptime decl
     @setEvalBranchQuota(c_struct_decls.len * 10);
     comptime var field_count: usize = 0;
     inline for (c_struct_decls) |decl| {
-        if (std.mem.startsWith(
-            u8,
-            decl.name,
-            decl_prefix,
-        ) and (@TypeOf(@field(c_struct, decl.name)) == inttype)) {
+        if (std.mem.startsWith(u8, decl.name, decl_prefix) and (@TypeOf(@field(c_struct, decl.name)) == inttype)) {
             field_count += 1;
         }
     }
-    comptime var fields: [field_count]std.builtin.Type.EnumField = undefined;
-    field_count = 0;
+    comptime var names: [field_count][]const u8 = undefined;
+    comptime var values: [field_count]inttype = undefined;
+    var idx: usize = 0;
     inline for (c_struct_decls) |decl| {
-        if (std.mem.startsWith(
-            u8,
-            decl.name,
-            decl_prefix,
-        ) and (@TypeOf(@field(c_struct, decl.name)) == inttype)) {
-            fields[field_count] = .{
-                .name = decl.name[decl_prefix.len..],
-                .value = @field(c_struct, decl.name),
-            };
-            field_count += 1;
+        if (std.mem.startsWith(u8, decl.name, decl_prefix) and (@TypeOf(@field(c_struct, decl.name)) == inttype)) {
+            names[idx] = decl.name[decl_prefix.len..];
+            values[idx] = @field(c_struct, decl.name);
+            idx += 1;
         }
     }
-    return @Type(std.builtin.Type{
-        .@"enum" = .{
-            .is_exhaustive = false,
-            .tag_type = inttype,
-            .fields = &fields,
-            .decls = &.{},
-        },
-    });
+    return @Enum(inttype, .nonexhaustive, &names, &values);
+}
+
+test "CTranslateEnum" {
+    const testing = std.testing;
+    const Dummy = struct {
+        pub const TEST_EVT_A: c_int = 0;
+        pub const TEST_EVT_B: c_int = 1;
+        pub const OTHER_VAL: c_int = 2;
+    };
+    const TestEnum = CTranslateEnum(Dummy, c_int, "TEST_EVT_");
+    const val_a: TestEnum = @enumFromInt(0);
+    const val_b: TestEnum = @enumFromInt(1);
+    try testing.expectEqualStrings("A", @tagName(val_a));
+    try testing.expectEqualStrings("B", @tagName(val_b));
 }
