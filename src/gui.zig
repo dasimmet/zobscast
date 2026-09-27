@@ -45,22 +45,22 @@ fn loadQt() void {
 
     if (h_gui) |hg| {
         if (dlsym(hg, "_ZN7QAction12setCheckableEb")) |sym| {
-            fn_set_checkable = @ptrCast(sym);
+            fn_set_checkable = @ptrCast(@alignCast(sym));
         }
         if (dlsym(hg, "_ZN7QAction10setCheckedEb")) |sym| {
-            fn_set_checked = @ptrCast(sym);
+            fn_set_checked = @ptrCast(@alignCast(sym));
         }
         if (dlsym(hg, "_ZNK7QAction10menuObjectEv")) |sym| {
-            fn_menu_object = @ptrCast(sym);
+            fn_menu_object = @ptrCast(@alignCast(sym));
         }
     }
 
     if (h_widgets) |hw| {
         if (dlsym(hw, "_ZNK11QMainWindow7menuBarEv")) |sym| {
-            fn_menu_bar = @ptrCast(sym);
+            fn_menu_bar = @ptrCast(@alignCast(sym));
         }
         if (dlsym(hw, "_ZNK7QWidget7actionsEv")) |sym| {
-            fn_actions = @ptrCast(sym);
+            fn_actions = @ptrCast(@alignCast(sym));
         }
     }
 

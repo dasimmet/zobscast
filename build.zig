@@ -55,6 +55,8 @@ pub fn build(b: *std.Build) void {
     });
     if (target.result.os.tag == .linux) {
         lib.setVersionScript(b.path("src/zobscast.version"));
+    } else if (target.result.os.tag.isDarwin()) {
+        lib.linker_allow_shlib_undefined = true;
     }
 
     const rel_path = b.fmt(
