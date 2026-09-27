@@ -38,7 +38,7 @@ pub const Discovery = struct {
 
     pub fn scan(self: *Discovery, timeout_ms: c_int) !void {
         const sock = c.socket(c.AF_INET, c.SOCK_DGRAM, 0);
-        if (sock < 0) return error.SocketCreationFailed;
+        if (c.is_socket_valid(sock) == 0) return error.SocketCreationFailed;
         defer _ = c.close(sock);
 
         var reuse: c_int = 1;
@@ -47,7 +47,7 @@ pub const Discovery = struct {
         var bind_addr: c.sockaddr_in = std.mem.zeroes(c.sockaddr_in);
         bind_addr.sin_family = c.AF_INET;
         bind_addr.sin_port = 0; // ephemeral port for sending query
-        bind_addr.sin_addr.s_addr = c.INADDR_ANY;
+        c.set_inaddr_any(&bind_addr);
 
         if (c.bind(sock, @ptrCast(&bind_addr), @sizeOf(c.sockaddr_in)) < 0) {
             return error.BindFailed;
@@ -275,7 +275,5 @@ pub const Discovery = struct {
 };
 
 fn getMilliTime() i64 {
-    var ts: c.struct_timespec = undefined;
-    _ = c.clock_gettime(c.CLOCK_MONOTONIC, &ts);
-    return @as(i64, ts.tv_sec) * 1000 + @divTrunc(ts.tv_nsec, 1000000);
+    return @intCast(@divTrunc(c.os_gettime_ns(), 1_000_000));
 }

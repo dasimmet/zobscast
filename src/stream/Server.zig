@@ -2,10 +2,10 @@ const std = @import("std");
 const c = @import("c");
 
 pub const Server = struct {
-    server_fd: c_int = -1,
+    server_fd: c.SOCKET = c.INVALID_SOCKET_VALUE,
     port: u16 = 0,
     running: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
-    clients: std.ArrayListUnmanaged(c_int) = .empty,
+    clients: std.ArrayListUnmanaged(c.SOCKET) = .empty,
     client_mutex: std.atomic.Mutex = .unlocked,
     thread: ?std.Thread = null,
     allocator: std.mem.Allocator,
@@ -22,14 +22,14 @@ pub const Server = struct {
 
     pub fn start(self: *Server, preferred_port: u16) !u16 {
         const fd = c.socket(c.AF_INET, c.SOCK_STREAM, 0);
-        if (fd < 0) return error.SocketCreationFailed;
+        if (c.is_socket_valid(fd) == 0) return error.SocketCreationFailed;
 
         var opt: c_int = 1;
         _ = c.setsockopt(fd, c.SOL_SOCKET, c.SO_REUSEADDR, @ptrCast(&opt), @sizeOf(c_int));
 
         var addr: c.sockaddr_in = std.mem.zeroes(c.sockaddr_in);
         addr.sin_family = c.AF_INET;
-        addr.sin_addr.s_addr = c.INADDR_ANY;
+        c.set_inaddr_any(&addr);
 
         // Try preferred port first, fallback to 0 (ephemeral port)
         addr.sin_port = c.htons(preferred_port);
@@ -59,7 +59,7 @@ pub const Server = struct {
 
         self.thread = std.Thread.spawn(.{}, acceptLoop, .{self}) catch |err| {
             _ = c.close(fd);
-            self.server_fd = -1;
+            self.server_fd = c.INVALID_SOCKET_VALUE;
             return err;
         };
 
@@ -85,7 +85,7 @@ pub const Server = struct {
         var i: usize = 0;
         while (i < self.clients.items.len) {
             const client_fd = self.clients.items[i];
-            const res = c.send(client_fd, data.ptr, data.len, c.MSG_NOSIGNAL);
+            const res = c.send(client_fd, data.ptr, @intCast(data.len), c.MSG_NOSIGNAL);
             if (res < 0) {
                 _ = c.close(client_fd);
                 _ = self.clients.swapRemove(i);
@@ -108,7 +108,7 @@ pub const Server = struct {
             var client_addr: c.sockaddr_in = std.mem.zeroes(c.sockaddr_in);
             var client_len: c.socklen_t = @sizeOf(c.sockaddr_in);
             const client_fd = c.accept(self.server_fd, @ptrCast(&client_addr), &client_len);
-            if (client_fd < 0) continue;
+            if (c.is_socket_valid(client_fd) == 0) continue;
 
             // Low-latency socket tuning: disable Nagle's algorithm and limit buffer backlog
             var nodelay: c_int = 1;
@@ -123,7 +123,7 @@ pub const Server = struct {
         }
     }
 
-    fn handleClient(self: *Server, client_fd: c_int) void {
+    fn handleClient(self: *Server, client_fd: c.SOCKET) void {
         // Read HTTP request line
         var req_buf: [1024]u8 = undefined;
         const n = c.recv(client_fd, &req_buf, req_buf.len, 0);
@@ -144,7 +144,7 @@ pub const Server = struct {
             "Connection: close\r\n" ++
             "\r\n";
 
-        _ = c.send(client_fd, http_response_header.ptr, http_response_header.len, 0);
+        _ = c.send(client_fd, http_response_header.ptr, @intCast(http_response_header.len), 0);
 
         // Send initialization header (ftyp + moov) if available
         {
@@ -152,7 +152,7 @@ pub const Server = struct {
                 std.Thread.yield() catch {};
             }
             if (self.header_data.items.len > 0) {
-                _ = c.send(client_fd, self.header_data.items.ptr, self.header_data.items.len, 0);
+                _ = c.send(client_fd, self.header_data.items.ptr, @intCast(self.header_data.items.len), 0);
                 c.blog(c.LOG_INFO, "zobscast HTTP: client connected, sent init header (%u bytes)", @as(c_uint, @intCast(self.header_data.items.len)));
             } else {
                 c.blog(c.LOG_WARNING, "zobscast HTTP: client connected before init header was ready");
@@ -175,7 +175,7 @@ pub const Server = struct {
     /// Gets the local IPv4 address that routes towards destination_ip
     pub fn getLocalIpFor(dest_ip_str: []const u8, buf: []u8) ![]const u8 {
         const udp_fd = c.socket(c.AF_INET, c.SOCK_DGRAM, 0);
-        if (udp_fd < 0) return error.SocketCreationFailed;
+        if (c.is_socket_valid(udp_fd) == 0) return error.SocketCreationFailed;
         defer _ = c.close(udp_fd);
 
         var dest_addr: c.sockaddr_in = std.mem.zeroes(c.sockaddr_in);
@@ -216,9 +216,9 @@ pub const Server = struct {
 
     pub fn stop(self: *Server) void {
         self.running.store(false, .monotonic);
-        if (self.server_fd >= 0) {
+        if (c.is_socket_valid(self.server_fd) != 0) {
             _ = c.close(self.server_fd);
-            self.server_fd = -1;
+            self.server_fd = c.INVALID_SOCKET_VALUE;
         }
 
         if (self.thread) |t| {

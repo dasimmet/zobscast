@@ -27,39 +27,70 @@ var fn_menu_object: ?MenuObjectFn = null;
 var cached_action: ?*anyopaque = null;
 var qt_loaded: bool = false;
 
+const builtin = @import("builtin");
+
 const RTLD_LAZY: c_int = 1;
 const RTLD_NOLOAD: c_int = 4;
 extern fn dlopen(path: [*c]const u8, flags: c_int) ?*anyopaque;
 extern fn dlsym(handle: ?*anyopaque, sym: [*c]const u8) ?*anyopaque;
 
+fn loadLibrary(name: [*c]const u8) ?*anyopaque {
+    if (comptime builtin.os.tag == .windows) {
+        if (c.GetModuleHandleA(name)) |h| return @ptrCast(h);
+        if (c.LoadLibraryA(name)) |h| return @ptrCast(h);
+        return null;
+    } else {
+        var h = dlopen(name, RTLD_LAZY | RTLD_NOLOAD);
+        if (h == null) h = dlopen(name, RTLD_LAZY);
+        return h;
+    }
+}
+
+fn loadSymbol(handle: ?*anyopaque, sym: [*c]const u8) ?*anyopaque {
+    if (handle == null) return null;
+    if (comptime builtin.os.tag == .windows) {
+        if (c.GetProcAddress(@ptrCast(@alignCast(handle)), sym)) |p| return @ptrCast(@constCast(p));
+        return null;
+    } else {
+        return dlsym(handle, sym);
+    }
+}
+
 fn loadQt() void {
     if (qt_loaded) return;
     qt_loaded = true;
 
-    // Load Qt6Gui, Qt6Widgets
-    var h_gui = dlopen("libQt6Gui.so.6", RTLD_LAZY | RTLD_NOLOAD);
-    if (h_gui == null) h_gui = dlopen("libQt6Gui.so.6", RTLD_LAZY);
+    const gui_lib: [*c]const u8 = switch (builtin.os.tag) {
+        .windows => "Qt6Gui.dll",
+        .macos => "libQt6Gui.dylib",
+        else => "libQt6Gui.so.6",
+    };
+    const widgets_lib: [*c]const u8 = switch (builtin.os.tag) {
+        .windows => "Qt6Widgets.dll",
+        .macos => "libQt6Widgets.dylib",
+        else => "libQt6Widgets.so.6",
+    };
 
-    var h_widgets = dlopen("libQt6Widgets.so.6", RTLD_LAZY | RTLD_NOLOAD);
-    if (h_widgets == null) h_widgets = dlopen("libQt6Widgets.so.6", RTLD_LAZY);
+    const h_gui = loadLibrary(gui_lib);
+    const h_widgets = loadLibrary(widgets_lib);
 
     if (h_gui) |hg| {
-        if (dlsym(hg, "_ZN7QAction12setCheckableEb")) |sym| {
+        if (loadSymbol(hg, "_ZN7QAction12setCheckableEb")) |sym| {
             fn_set_checkable = @ptrCast(@alignCast(sym));
         }
-        if (dlsym(hg, "_ZN7QAction10setCheckedEb")) |sym| {
+        if (loadSymbol(hg, "_ZN7QAction10setCheckedEb")) |sym| {
             fn_set_checked = @ptrCast(@alignCast(sym));
         }
-        if (dlsym(hg, "_ZNK7QAction10menuObjectEv")) |sym| {
+        if (loadSymbol(hg, "_ZNK7QAction10menuObjectEv")) |sym| {
             fn_menu_object = @ptrCast(@alignCast(sym));
         }
     }
 
     if (h_widgets) |hw| {
-        if (dlsym(hw, "_ZNK11QMainWindow7menuBarEv")) |sym| {
+        if (loadSymbol(hw, "_ZNK11QMainWindow7menuBarEv")) |sym| {
             fn_menu_bar = @ptrCast(@alignCast(sym));
         }
-        if (dlsym(hw, "_ZNK7QWidget7actionsEv")) |sym| {
+        if (loadSymbol(hw, "_ZNK7QWidget7actionsEv")) |sym| {
             fn_actions = @ptrCast(@alignCast(sym));
         }
     }

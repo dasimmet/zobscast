@@ -57,6 +57,33 @@ pub fn build(b: *std.Build) void {
         lib.setVersionScript(b.path("src/zobscast.version"));
     } else if (target.result.os.tag.isDarwin()) {
         lib.linker_allow_shlib_undefined = true;
+    } else if (target.result.os.tag == .windows) {
+        lib.root_module.linkSystemLibrary("ws2_32", .{});
+
+        const machine_flag = switch (target.result.cpu.arch) {
+            .x86_64 => "i386:x86-64",
+            .aarch64 => "arm64",
+            .x86 => "i386",
+            else => "i386:x86-64",
+        };
+
+        const dlltool_obs = b.addSystemCommand(&.{
+            b.graph.zig_exe, "dlltool", "-m", machine_flag, "-d",
+        });
+        dlltool_obs.addFileArg(b.path("src/windows/obs.def"));
+        dlltool_obs.addArgs(&.{ "-l" });
+        const obs_lib = dlltool_obs.addOutputFileArg("obs.lib");
+        dlltool_obs.addArgs(&.{ "-D", "obs.dll" });
+        lib.root_module.addObjectFile(obs_lib);
+
+        const dlltool_fe = b.addSystemCommand(&.{
+            b.graph.zig_exe, "dlltool", "-m", machine_flag, "-d",
+        });
+        dlltool_fe.addFileArg(b.path("src/windows/obs-frontend-api.def"));
+        dlltool_fe.addArgs(&.{ "-l" });
+        const obs_fe_lib = dlltool_fe.addOutputFileArg("obs-frontend-api.lib");
+        dlltool_fe.addArgs(&.{ "-D", "obs-frontend-api.dll" });
+        lib.root_module.addObjectFile(obs_fe_lib);
     }
 
     const rel_path = b.fmt(

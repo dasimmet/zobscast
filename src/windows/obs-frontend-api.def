@@ -1,0 +1,6 @@
+LIBRARY obs-frontend-api.dll
+EXPORTS
+    obs_frontend_add_event_callback
+    obs_frontend_add_tools_menu_item
+    obs_frontend_get_main_window
+    obs_frontend_open_source_properties

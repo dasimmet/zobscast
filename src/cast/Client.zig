@@ -114,8 +114,10 @@ pub const Client = struct {
         };
         self.stream = stream;
 
-        const tv: std.posix.timeval = .{ .sec = 8, .usec = 0 };
-        std.posix.setsockopt(stream.socket.handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, &std.mem.toBytes(tv)) catch {};
+        if (comptime @import("builtin").os.tag != .windows) {
+            const tv: std.posix.timeval = .{ .sec = 8, .usec = 0 };
+            std.posix.setsockopt(stream.socket.handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, &std.mem.toBytes(tv)) catch {};
+        }
 
         self.stream_writer = stream.writer(io, &self.tls_write_buf);
         self.stream_reader = stream.reader(io, &self.socket_read_buf);
