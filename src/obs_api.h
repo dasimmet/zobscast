@@ -53,6 +53,9 @@ EXPORT bool obs_output_active(const obs_output_t *output);
 EXPORT void obs_output_release(obs_output_t *output);
 EXPORT void obs_output_update(obs_output_t *output, obs_data_t *settings);
 EXPORT obs_data_t *obs_output_get_settings(const obs_output_t *output);
+EXPORT uint32_t obs_output_get_width(const obs_output_t *output);
+EXPORT uint32_t obs_output_get_height(const obs_output_t *output);
+EXPORT obs_encoder_t *obs_output_get_video_encoder(const obs_output_t *output);
 
 EXPORT video_t *obs_get_video(void);
 EXPORT obs_encoder_t *obs_video_encoder_create(const char *id, const char *name,
@@ -62,6 +65,8 @@ EXPORT void obs_encoder_set_preferred_video_format(obs_encoder_t *encoder,
                                                    enum video_format format);
 EXPORT void obs_encoder_set_video(obs_encoder_t *encoder, video_t *video);
 EXPORT void obs_encoder_release(obs_encoder_t *encoder);
+EXPORT bool obs_encoder_get_extra_data(const obs_encoder_t *encoder,
+                                       uint8_t **extra_data, size_t *size);
 
 EXPORT obs_source_t *obs_source_create_private(const char *id, const char *name,
                                                obs_data_t *settings);

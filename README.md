@@ -21,8 +21,8 @@
   - Memory-safe stream forwarding designed to run across Linux, Windows, and macOS.
 
 - **OBS Studio GUI Integration**:
-  - Adds **Tools $\rightarrow$ Zobscast Options** to directly open the native configuration dialog anytime.
-  - Adds **Tools $\rightarrow$ Toggle Zobscast** to start/stop live streaming with one click.
+  - Adds **Tools $\rightarrow$ Zobscast: Options** to directly open the native configuration dialog anytime.
+  - Adds **Tools $\rightarrow$ Zobscast: Toggle** to start/stop live streaming with one click.
   - Registers the **Zobscast** input source type under Sources, allowing you to configure sink settings and encoder options directly from Source Properties.
   - Provides an auto-populated **Cast Sink** dropdown list with friendly Chromecast device names discovered via mDNS, a **Scan for Devices** button, manual IP entry, and configurable bitrates and encoder presets.
   - Automatically saves settings to `zobscast.json` in OBS's plugin configuration directory.
@@ -140,8 +140,8 @@ Copy the built library and data folder to:
    - Adjust the **Bitrate** (kbps) and **Encoder Preset** as desired.
    - Click OK — your settings are saved automatically to `zobscast.json` across OBS restarts.
 4. **Start / Stop Casting**:
-   - Click **Tools $\rightarrow$ Toggle Zobscast** in the top menu bar to start streaming.
-   - Click **Tools $\rightarrow$ Toggle Zobscast** again to disconnect and stop streaming.
+   - Click **Tools $\rightarrow$ Zobscast: Toggle** in the top menu bar to start streaming.
+   - Click **Tools $\rightarrow$ Zobscast: Toggle** again to disconnect and stop streaming.
 
 ---
 

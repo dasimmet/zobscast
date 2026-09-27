@@ -126,6 +126,10 @@ pub const Server = struct {
             return;
         }
 
+        const req_slice = req_buf[0..@intCast(n)];
+        const first_line_end = std.mem.indexOf(u8, req_slice, "\r\n") orelse req_slice.len;
+        c.blog(c.LOG_INFO, "zobscast HTTP: request '%.*s'", @as(c_int, @intCast(first_line_end)), req_slice.ptr);
+
         const http_response_header =
             "HTTP/1.1 200 OK\r\n" ++
             "Content-Type: video/mp4\r\n" ++
@@ -143,6 +147,9 @@ pub const Server = struct {
             }
             if (self.header_data.items.len > 0) {
                 _ = c.send(client_fd, self.header_data.items.ptr, self.header_data.items.len, 0);
+                c.blog(c.LOG_INFO, "zobscast HTTP: client connected, sent init header (%u bytes)", @as(c_uint, @intCast(self.header_data.items.len)));
+            } else {
+                c.blog(c.LOG_WARNING, "zobscast HTTP: client connected before init header was ready");
             }
             self.header_mutex.unlock();
         }
@@ -175,10 +182,12 @@ pub const Server = struct {
         ip_z[len] = 0;
 
         if (c.inet_pton(c.AF_INET, &ip_z, &dest_addr.sin_addr) <= 0) {
+            c.blog(c.LOG_ERROR, "zobscast Server: inet_pton failed for destination '%s'", &ip_z);
             return error.InvalidDestinationIp;
         }
 
         if (c.connect(udp_fd, @ptrCast(&dest_addr), @sizeOf(c.sockaddr_in)) < 0) {
+            c.blog(c.LOG_ERROR, "zobscast Server: routing UDP connect failed for '%s'", &ip_z);
             return error.RoutingFailed;
         }
 

@@ -20,7 +20,6 @@ export fn obs_module_load() callconv(.c) bool {
 
 export fn obs_module_unload() callconv(.c) void {
     c.blog(c.LOG_INFO, "zobscast module_unload");
-    c.obs_frontend_remove_event_callback(OBSEvent, null);
 
     if (options_source) |s| {
         c.obs_source_release(s);
@@ -32,7 +31,6 @@ export fn obs_module_unload() callconv(.c) void {
         if (c.obs_output_active(out)) {
             c.obs_output_stop(out);
         }
-        c.obs_output_release(out);
         c.obs_output_release(out);
     }
 
@@ -60,8 +58,9 @@ fn OBSEvent(ev: c_uint, ctx: ?*anyopaque) callconv(.c) void {
     c.blog(c.LOG_INFO, "zobscast frontend event: %u %s", ev, @tagName(evt).ptr);
     switch (evt) {
         .FINISHED_LOADING => {
+            const gui = @import("gui.zig");
             const toggle_local: [*c]const u8 = obs_module_text("Zobscast.Toggle");
-            c.obs_frontend_add_tools_menu_item(toggle_local, Output.toggle, null);
+            gui.addToggleAction(toggle_local, Output.toggle, null);
             const options_local: [*c]const u8 = obs_module_text("Zobscast.Options");
             c.obs_frontend_add_tools_menu_item(options_local, openOptions, null);
         },

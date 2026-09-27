@@ -1,75 +1,18 @@
 const std = @import("std");
-
-pub const AVRational = extern struct {
-    num: c_int,
-    den: c_int,
-};
-
-pub const AVCodecParameters = extern struct {
-    codec_type: c_int,
-    codec_id: c_uint,
-    codec_tag: u32,
-    extradata: ?[*]u8,
-    extradata_size: c_int,
-    format: c_int,
-    bit_rate: i64,
-    bits_per_coded_sample: c_int,
-    bits_per_raw_sample: c_int,
-    profile: c_int,
-    level: c_int,
-    width: c_int,
-    height: c_int,
-};
-
-pub const AVStream = extern struct {
-    index: c_int,
-    id: c_int,
-    codecpar: *AVCodecParameters,
-    time_base: AVRational,
-};
-
-pub const AVPacket = extern struct {
-    buf: ?*anyopaque,
-    pts: i64,
-    dts: i64,
-    data: ?[*]u8,
-    size: c_int,
-    stream_index: c_int,
-    flags: c_int,
-    side_data: ?*anyopaque,
-    side_data_elems: c_int,
-    duration: i64,
-    pos: i64,
-    @"opaque": ?*anyopaque,
-    opaque_ref: ?*anyopaque,
-    time_base: AVRational,
-};
-
-pub const AVIOContext = opaque {};
-pub const AVDictionary = opaque {};
-
-pub const AVFormatContext = extern struct {
-    av_class: ?*const anyopaque,
-    iformat: ?*const anyopaque,
-    oformat: ?*const anyopaque,
-    priv_data: ?*anyopaque,
-    pb: ?*AVIOContext,
-    ctx_flags: c_int,
-    nb_streams: c_uint,
-    streams: [*]?*AVStream,
-};
+const av = @import("av");
+const c = @import("c");
 
 extern fn avformat_alloc_output_context2(
-    ctx: *?*AVFormatContext,
-    oformat: ?*anyopaque,
+    ctx: *?*av.FormatContext,
+    oformat: ?*const anyopaque,
     format_name: ?[*:0]const u8,
     filename: ?[*:0]const u8,
 ) c_int;
-extern fn avformat_free_context(s: ?*AVFormatContext) void;
-extern fn avformat_new_stream(s: *AVFormatContext, c: ?*anyopaque) ?*AVStream;
-extern fn avformat_write_header(s: *AVFormatContext, options: *?*AVDictionary) c_int;
-extern fn av_write_trailer(s: *AVFormatContext) c_int;
-extern fn av_interleaved_write_frame(s: *AVFormatContext, pkt: ?*AVPacket) c_int;
+extern fn avformat_free_context(s: ?*av.FormatContext) void;
+extern fn avformat_new_stream(s: *av.FormatContext, c: ?*anyopaque) ?*av.Stream;
+extern fn avformat_write_header(s: *av.FormatContext, options: *?*anyopaque) c_int;
+extern fn av_write_trailer(s: *av.FormatContext) c_int;
+extern fn av_interleaved_write_frame(s: *av.FormatContext, pkt: ?*av.Packet) c_int;
 
 extern fn avio_alloc_context(
     buffer: [*]u8,
@@ -79,31 +22,31 @@ extern fn avio_alloc_context(
     read_packet: ?*const fn (?*anyopaque, [*]u8, c_int) callconv(.c) c_int,
     write_packet: ?*const fn (?*anyopaque, [*]const u8, c_int) callconv(.c) c_int,
     seek: ?*const fn (?*anyopaque, i64, c_int) callconv(.c) i64,
-) ?*AVIOContext;
-extern fn avio_context_free(s: *?*AVIOContext) void;
+) ?*av.IOContext;
+extern fn avio_context_free(s: *?*av.IOContext) void;
 
-extern fn av_packet_alloc() ?*AVPacket;
-extern fn av_packet_free(pkt: *?*AVPacket) void;
-extern fn av_packet_unref(pkt: *AVPacket) void;
+extern fn av_packet_alloc() ?*av.Packet;
+extern fn av_packet_free(pkt: *?*av.Packet) void;
+extern fn av_packet_unref(pkt: *av.Packet) void;
 
 extern fn av_dict_set(
-    pm: *?*AVDictionary,
+    pm: *?*anyopaque,
     key: [*:0]const u8,
     value: ?[*:0]const u8,
     flags: c_int,
 ) c_int;
-extern fn av_dict_free(m: *?*AVDictionary) void;
+extern fn av_dict_free(m: *?*anyopaque) void;
 extern fn av_malloc(size: usize) ?[*]u8;
 extern fn av_free(ptr: ?*anyopaque) void;
-extern fn av_rescale_q(a: i64, b: AVRational, c: AVRational) i64;
+extern fn av_rescale_q(a: i64, b: av.Rational, c: av.Rational) i64;
 
 pub const OnDataFn = *const fn (ctx: ?*anyopaque, data: []const u8) void;
 
 pub const Muxer = struct {
-    format_ctx: ?*AVFormatContext = null,
-    avio_ctx: ?*AVIOContext = null,
-    stream: ?*AVStream = null,
-    pkt: ?*AVPacket = null,
+    format_ctx: ?*av.FormatContext = null,
+    avio_ctx: ?*av.IOContext = null,
+    stream: ?*av.Stream = null,
+    pkt: ?*av.Packet = null,
     avio_buffer: ?[*]u8 = null,
     on_data: OnDataFn,
     data_ctx: ?*anyopaque,
@@ -114,7 +57,15 @@ pub const Muxer = struct {
     pts_offset: i64 = 0,
     has_pts_offset: bool = false,
 
-    pub fn init(allocator: std.mem.Allocator, on_data: OnDataFn, data_ctx: ?*anyopaque) !*Muxer {
+    pub fn init(
+        allocator: std.mem.Allocator,
+        on_data: OnDataFn,
+        data_ctx: ?*anyopaque,
+        width: u32,
+        height: u32,
+        extradata: ?[]const u8,
+    ) !*Muxer {
+        c.blog(c.LOG_INFO, "zobscast Muxer: initializing in-memory FFmpeg muxer (%ux%u)...", width, height);
         const self = try allocator.create(Muxer);
         self.* = .{
             .on_data = on_data,
@@ -123,7 +74,10 @@ pub const Muxer = struct {
         };
 
         const avio_buf_size: usize = 64 * 1024;
-        self.avio_buffer = av_malloc(avio_buf_size) orelse return error.OutOfMemory;
+        self.avio_buffer = av_malloc(avio_buf_size) orelse {
+            c.blog(c.LOG_ERROR, "zobscast Muxer: av_malloc failed");
+            return error.OutOfMemory;
+        };
 
         self.avio_ctx = avio_alloc_context(
             self.avio_buffer.?,
@@ -133,32 +87,56 @@ pub const Muxer = struct {
             null,
             writePacketCb,
             null,
-        ) orelse return error.AvioAllocFailed;
+        ) orelse {
+            c.blog(c.LOG_ERROR, "zobscast Muxer: avio_alloc_context failed");
+            return error.AvioAllocFailed;
+        };
 
-        var fmt_ctx: ?*AVFormatContext = null;
+        var fmt_ctx: ?*av.FormatContext = null;
         if (avformat_alloc_output_context2(&fmt_ctx, null, "mp4", null) < 0 or fmt_ctx == null) {
+            c.blog(c.LOG_ERROR, "zobscast Muxer: avformat_alloc_output_context2 failed");
             return error.AvformatAllocFailed;
         }
         self.format_ctx = fmt_ctx;
         self.format_ctx.?.pb = self.avio_ctx;
 
-        self.stream = avformat_new_stream(self.format_ctx.?, null) orelse return error.NewStreamFailed;
-        self.stream.?.codecpar.codec_type = 0; // AVMEDIA_TYPE_VIDEO
-        self.stream.?.codecpar.codec_id = 27; // AV_CODEC_ID_H264
+        self.stream = avformat_new_stream(self.format_ctx.?, null) orelse {
+            c.blog(c.LOG_ERROR, "zobscast Muxer: avformat_new_stream failed");
+            return error.NewStreamFailed;
+        };
+
+        self.stream.?.codecpar.codec_type = .VIDEO;
+        self.stream.?.codecpar.codec_id = .H264;
+        self.stream.?.codecpar.width = @intCast(width);
+        self.stream.?.codecpar.height = @intCast(height);
         self.stream.?.time_base = .{ .num = 1, .den = 1000 };
 
-        var opts: ?*AVDictionary = null;
+        if (extradata) |extra| {
+            if (extra.len > 0) {
+                const extra_buf = av_malloc(extra.len + 64) orelse return error.OutOfMemory;
+                @memcpy(extra_buf[0..extra.len], extra);
+                @memset(extra_buf[extra.len .. extra.len + 64], 0);
+                self.stream.?.codecpar.extradata = extra_buf;
+                self.stream.?.codecpar.extradata_size = @intCast(extra.len);
+                c.blog(c.LOG_INFO, "zobscast Muxer: set codecpar.extradata (%u bytes)", @as(c_uint, @intCast(extra.len)));
+            }
+        }
+
+        var opts: ?*anyopaque = null;
         _ = av_dict_set(&opts, "movflags", "frag_keyframe+empty_moov+default_base_moof", 0);
         _ = av_dict_set(&opts, "brand", "iso6", 0);
 
-        if (avformat_write_header(self.format_ctx.?, &opts) < 0) {
+        const write_ret = avformat_write_header(self.format_ctx.?, &opts);
+        if (write_ret < 0) {
             av_dict_free(&opts);
+            c.blog(c.LOG_ERROR, "zobscast Muxer: avformat_write_header failed with code %d", write_ret);
             return error.WriteHeaderFailed;
         }
         av_dict_free(&opts);
 
         self.pkt = av_packet_alloc() orelse return error.OutOfMemory;
         self.header_done = true;
+        c.blog(c.LOG_INFO, "zobscast Muxer: initialized successfully (header size: %u bytes)", @as(c_uint, @intCast(self.header_data.items.len)));
         return self;
     }
 
@@ -198,24 +176,23 @@ pub const Muxer = struct {
             }
 
             if (!self.has_pts_offset) {
-                self.pts_offset = pts;
+                self.pts_offset = dts;
                 self.has_pts_offset = true;
             }
 
-            const adj_pts = pts - self.pts_offset;
-            const adj_dts = dts - self.pts_offset;
+            const in_tb: av.Rational = if (timebase_num > 0 and timebase_den > 0)
+                .{ .num = timebase_num, .den = timebase_den }
+            else
+                .{ .num = 1, .den = 30 };
+            const out_tb = self.stream.?.time_base;
 
-            if (timebase_den > 0 and self.stream.?.time_base.den > 0) {
-                const in_tb = AVRational{ .num = timebase_num, .den = timebase_den };
-                pkt.pts = av_rescale_q(adj_pts, in_tb, self.stream.?.time_base);
-                pkt.dts = av_rescale_q(adj_dts, in_tb, self.stream.?.time_base);
-            } else {
-                pkt.pts = adj_pts;
-                pkt.dts = adj_dts;
-            }
+            pkt.pts = av_rescale_q(pts - self.pts_offset, in_tb, out_tb);
+            pkt.dts = av_rescale_q(dts - self.pts_offset, in_tb, out_tb);
+            pkt.duration = av_rescale_q(1, in_tb, out_tb);
 
             const ret = av_interleaved_write_frame(self.format_ctx.?, pkt);
             if (ret < 0) {
+                c.blog(c.LOG_ERROR, "zobscast Muxer: av_interleaved_write_frame error: %d", ret);
                 return error.WriteFrameFailed;
             }
         }
@@ -226,6 +203,7 @@ pub const Muxer = struct {
     }
 
     pub fn deinit(self: *Muxer) void {
+        c.blog(c.LOG_INFO, "zobscast Muxer: cleaning up...");
         if (self.format_ctx) |ctx| {
             _ = av_write_trailer(ctx);
         }
