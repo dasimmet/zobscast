@@ -1,7 +1,7 @@
 .{
     .name = .zobscast,
     .version = "0.0.1",
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0-dev.2313+5b9147ed5",
     .fingerprint = 0xedfe3c995eb92b07,
     .dependencies = .{
         .obs = .{
@@ -9,8 +9,8 @@
             .hash = "N-V-__8AAA2pVwIeSnpH_uzeikg7rCVvxOXXK0gno1lrEAij",
         },
         .ffmpeg = .{
-            .url = "git+https://github.com/dasimmet/ffmpeg?ref=zobscast#51ef8bd00505f6441f321f260cb6065d8f9a938a",
-            .hash = "ffmpeg-7.0.1-10-zT7QA2uLCAQ-2mynSKUIMQeU1oY7vOfBGJayK04EgnVU",
+            .url = "git+https://github.com/dasimmet/ffmpeg?ref=zobscast#6e0652889cad80e56668ea252ee683e27f5591b4",
+            .hash = "ffmpeg-8.1.1-6-zT7QA4b0UQRfMqUwc9CAXaiNrwkKAz-FPx2_CX3avw5P",
         },
         .simde = .{
             .url = "git+https://github.com/simd-everywhere/simde.git#dd8be31aad193e7e8668f992132e09a0651657e1",

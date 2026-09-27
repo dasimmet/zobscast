@@ -85,7 +85,7 @@ pub const Server = struct {
         var i: usize = 0;
         while (i < self.clients.items.len) {
             const client_fd = self.clients.items[i];
-            const res = c.send(client_fd, data.ptr, data.len, 0);
+            const res = c.send(client_fd, data.ptr, data.len, c.MSG_NOSIGNAL);
             if (res < 0) {
                 _ = c.close(client_fd);
                 _ = self.clients.swapRemove(i);
@@ -109,6 +109,12 @@ pub const Server = struct {
             var client_len: c.socklen_t = @sizeOf(c.sockaddr_in);
             const client_fd = c.accept(self.server_fd, @ptrCast(&client_addr), &client_len);
             if (client_fd < 0) continue;
+
+            // Low-latency socket tuning: disable Nagle's algorithm and limit buffer backlog
+            var nodelay: c_int = 1;
+            _ = c.setsockopt(client_fd, c.IPPROTO_TCP, c.TCP_NODELAY, @ptrCast(&nodelay), @sizeOf(c_int));
+            var sndbuf: c_int = 128 * 1024;
+            _ = c.setsockopt(client_fd, c.SOL_SOCKET, c.SO_SNDBUF, @ptrCast(&sndbuf), @sizeOf(c_int));
 
             // Handle client in thread
             _ = std.Thread.spawn(.{}, handleClient, .{ self, client_fd }) catch {

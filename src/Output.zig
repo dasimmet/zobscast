@@ -87,6 +87,10 @@ pub fn loadSettings() ?*c.obs_data_t {
     return null;
 }
 
+fn bufPrintZ(buf: []u8, comptime fmt: []const u8, args: anytype) ![:0]u8 {
+    return std.mem.printSentinel(buf, fmt, args, 0);
+}
+
 pub fn saveSettings(settings: *c.obs_data_t) void {
     const path = getConfigPath();
     if (path) |p| {
@@ -94,7 +98,7 @@ pub fn saveSettings(settings: *c.obs_data_t) void {
         const path_slice = std.mem.span(p);
         if (std.fs.path.dirname(path_slice)) |dir| {
             var dir_buf: [512:0]u8 = undefined;
-            if (std.fmt.bufPrintZ(&dir_buf, "{s}", .{dir})) |dir_z| {
+            if (bufPrintZ(&dir_buf, "{s}", .{dir})) |dir_z| {
                 _ = c.os_mkdirs(dir_z.ptr);
             } else |_| {}
         }
@@ -116,14 +120,17 @@ pub fn ensureEncoder(output: *c.obs_output_t) void {
     const br: c_longlong = if (bitrate > 0) bitrate else 2500;
     c.obs_data_set_int(enc_settings, "bitrate", br);
 
-    const preset_raw = c.obs_data_get_string(settings, "encoder_preset");
+    const preset_raw = c.obs_data_get_string(settings, "preset");
     const preset: [*c]const u8 = if (preset_raw != null and preset_raw[0] != 0)
         preset_raw
     else
-        "veryfast";
+        "ultrafast";
     c.obs_data_set_string(enc_settings, "preset", preset);
+    c.obs_data_set_string(enc_settings, "tune", "zerolatency");
     c.obs_data_set_string(enc_settings, "profile", "baseline");
     c.obs_data_set_int(enc_settings, "keyint_sec", 1);
+    c.obs_data_set_int(enc_settings, "bf", 0);
+    c.obs_data_set_string(enc_settings, "x264opts", "sync-lookahead=0:rc-lookahead=0");
 
     const enc_id: [*c]const u8 = "obs_x264";
     const enc = c.obs_video_encoder_create(enc_id, "zobscast_enc", enc_settings, null);
@@ -137,7 +144,7 @@ pub fn ensureEncoder(output: *c.obs_output_t) void {
     // while attached to the output.
 
     const check = c.obs_output_get_video_encoder(output);
-    c.blog(c.LOG_INFO, "zobscast: attached video encoder '%s' (%lld kbps, preset=%s, enc=%p, verified=%p)", enc_id, br, preset, enc, check);
+    c.blog(c.LOG_INFO, "zobscast: attached video encoder '%s' (%lld kbps, preset=%s, tune=zerolatency, enc=%p, verified=%p)", enc_id, br, preset, enc, check);
 }
 
 pub fn toggle(ctx: ?*anyopaque) callconv(.c) void {
@@ -307,9 +314,9 @@ pub fn get_properties(ctx: ?*anyopaque) callconv(.c) ?*c.obs_properties_t {
 
         for (dev_list.items) |d| {
             var label_buf: [256]u8 = undefined;
-            const label = std.fmt.bufPrintZ(&label_buf, "{s} ({s})", .{ d.name, d.ip }) catch d.name;
+            const label = bufPrintZ(&label_buf, "{s} ({s})", .{ d.name, d.ip }) catch d.name;
             var ip_z: [64:0]u8 = undefined;
-            const ip_slice = std.fmt.bufPrintZ(&ip_z, "{s}", .{d.ip}) catch d.ip;
+            const ip_slice = bufPrintZ(&ip_z, "{s}", .{d.ip}) catch d.ip;
             _ = c.obs_property_list_add_string(list, label.ptr, ip_slice.ptr);
         }
     }
@@ -516,7 +523,7 @@ fn connectThread(self: *@This()) void {
     const local_ip = Server.getLocalIpFor(target_ip, &ip_buf) catch "127.0.0.1";
 
     var url_buf: [256]u8 = undefined;
-    const stream_url = std.fmt.bufPrintZ(&url_buf, "http://{s}:{d}/live.mp4", .{ local_ip, server.port }) catch "http://127.0.0.1:8010/live.mp4";
+    const stream_url = bufPrintZ(&url_buf, "http://{s}:{d}/live.mp4", .{ local_ip, server.port }) catch "http://127.0.0.1:8010/live.mp4";
     c.blog(c.LOG_INFO, "zobscast: stream endpoint prepared at %s", stream_url.ptr);
 
     // 5. Begin data capture (encoders already initialized in start())

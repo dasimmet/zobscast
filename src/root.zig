@@ -105,7 +105,8 @@ fn CTranslateEnum(comptime c_struct: type, comptime inttype: type, comptime decl
     @setEvalBranchQuota(c_struct_decls.len * 10);
     comptime var field_count: usize = 0;
     inline for (c_struct_decls) |decl| {
-        if (std.mem.startsWith(u8, decl.name, decl_prefix) and (@TypeOf(@field(c_struct, decl.name)) == inttype)) {
+        const decl_name = if (@typeInfo(@TypeOf(decl)) == .@"struct" and @hasField(@TypeOf(decl), "name")) decl.name else decl;
+        if (std.mem.startsWith(u8, decl_name, decl_prefix) and (@TypeOf(@field(c_struct, decl_name)) == inttype)) {
             field_count += 1;
         }
     }
@@ -113,9 +114,10 @@ fn CTranslateEnum(comptime c_struct: type, comptime inttype: type, comptime decl
     comptime var values: [field_count]inttype = undefined;
     var idx: usize = 0;
     inline for (c_struct_decls) |decl| {
-        if (std.mem.startsWith(u8, decl.name, decl_prefix) and (@TypeOf(@field(c_struct, decl.name)) == inttype)) {
-            names[idx] = decl.name[decl_prefix.len..];
-            values[idx] = @field(c_struct, decl.name);
+        const decl_name = if (@typeInfo(@TypeOf(decl)) == .@"struct" and @hasField(@TypeOf(decl), "name")) decl.name else decl;
+        if (std.mem.startsWith(u8, decl_name, decl_prefix) and (@TypeOf(@field(c_struct, decl_name)) == inttype)) {
+            names[idx] = decl_name[decl_prefix.len..];
+            values[idx] = @field(c_struct, decl_name);
             idx += 1;
         }
     }

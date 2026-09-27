@@ -12,7 +12,9 @@ extern fn avformat_free_context(s: ?*av.FormatContext) void;
 extern fn avformat_new_stream(s: *av.FormatContext, c: ?*anyopaque) ?*av.Stream;
 extern fn avformat_write_header(s: *av.FormatContext, options: *?*anyopaque) c_int;
 extern fn av_write_trailer(s: *av.FormatContext) c_int;
+extern fn av_write_frame(s: *av.FormatContext, pkt: ?*av.Packet) c_int;
 extern fn av_interleaved_write_frame(s: *av.FormatContext, pkt: ?*av.Packet) c_int;
+extern fn avio_flush(s: *av.IOContext) void;
 
 extern fn avio_alloc_context(
     buffer: [*]u8,
@@ -73,7 +75,7 @@ pub const Muxer = struct {
             .allocator = allocator,
         };
 
-        const avio_buf_size: usize = 64 * 1024;
+        const avio_buf_size: usize = 16 * 1024;
         self.avio_buffer = av_malloc(avio_buf_size) orelse {
             c.blog(c.LOG_ERROR, "zobscast Muxer: av_malloc failed");
             return error.OutOfMemory;
@@ -190,10 +192,13 @@ pub const Muxer = struct {
             pkt.dts = av_rescale_q(dts - self.pts_offset, in_tb, out_tb);
             pkt.duration = av_rescale_q(1, in_tb, out_tb);
 
-            const ret = av_interleaved_write_frame(self.format_ctx.?, pkt);
+            const ret = av_write_frame(self.format_ctx.?, pkt);
             if (ret < 0) {
-                c.blog(c.LOG_ERROR, "zobscast Muxer: av_interleaved_write_frame error: %d", ret);
+                c.blog(c.LOG_ERROR, "zobscast Muxer: av_write_frame error: %d", ret);
                 return error.WriteFrameFailed;
+            }
+            if (self.avio_ctx) |pb| {
+                avio_flush(pb);
             }
         }
     }
