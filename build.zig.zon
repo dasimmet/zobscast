@@ -1,16 +1,16 @@
 .{
     .name = .zobscast,
     .version = "0.0.1",
-    .minimum_zig_version = "0.15.2",
+    .minimum_zig_version = "0.16.0",
     .fingerprint = 0xedfe3c995eb92b07,
     .dependencies = .{
         .obs = .{
-            .url = "git+https://github.com/obsproject/obs-studio.git#0b1229632063a13dfd26cf1cd9dd43431d8c68f6",
-            .hash = "N-V-__8AAMjFSQL8jvYhk3W-XuJrKnVOQzl_l5ZJx4AO1YTj",
+            .url = "git+https://github.com/obsproject/obs-studio.git#50530ce9046599e698c5d2068e4f053fae2318f6",
+            .hash = "N-V-__8AAA2pVwIeSnpH_uzeikg7rCVvxOXXK0gno1lrEAij",
         },
-        .simde = .{
-            .url = "git+https://github.com/simd-everywhere/simde.git#dd8be31aad193e7e8668f992132e09a0651657e1",
-            .hash = "N-V-__8AAC8TdAMeaXYjT-T6htgpZVpbiz7jJkuTtSU9kCD5",
+        .ffmpeg = .{
+            .url = "git+https://github.com/allyourcodebase/ffmpeg#84ae6daa5f2fb467c3541b6f6be4c9b386359436",
+            .hash = "ffmpeg-7.0.1-10-zT7QAzaLCASuyyl7vUb7iyjr9nP7WcGnJp40ytR7WJij",
         },
     },
     .paths = .{""},

@@ -3,31 +3,6 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const lib = b.addLibrary(.{
-        .name = "zobscast",
-        .root_module = b.addModule("zobscast", .{
-            .root_source_file = b.path("src/root.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-        .linkage = .dynamic,
-    });
-
-    const ext_install = b.addInstallBinFile(lib.getEmittedBin(), b.fmt(
-        "{d}bit/{s}{s}",
-        .{
-            target.result.ptrBitWidth(),
-            lib.name,
-            target.result.dynamicLibSuffix(),
-        },
-    ));
-
-    b.getInstallStep().dependOn(&ext_install.step);
-    b.installDirectory(.{
-        .source_dir = b.path("data"),
-        .install_dir = .prefix,
-        .install_subdir = "data",
-    });
 
     const obs = b.dependency("obs", .{});
     const c_head = b.addTranslateC(.{
@@ -50,8 +25,44 @@ pub fn build(b: *std.Build) void {
     });
     c_head.addIncludePath(obsconfig.getOutputDir());
 
-    const simde = b.dependency("simde", .{});
-    c_head.addIncludePath(simde.path(""));
+    const ffmpeg = b.dependency("ffmpeg", .{
+        .target = target,
+        .optimize = optimize,
+    });
 
-    lib.root_module.addImport("c", c_head.createModule());
+    const lib = b.addLibrary(.{
+        .name = "zobscast",
+        .root_module = b.addModule("zobscast", .{
+            .root_source_file = b.path("src/root.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{
+                    .name = "av",
+                    .module = ffmpeg.module("av"),
+                },
+                .{
+                    .name = "c",
+                    .module = c_head.createModule(),
+                },
+            },
+        }),
+        .linkage = .dynamic,
+    });
+
+    const ext_install = b.addInstallBinFile(lib.getEmittedBin(), b.fmt(
+        "{d}bit/{s}{s}",
+        .{
+            target.result.ptrBitWidth(),
+            lib.name,
+            target.result.dynamicLibSuffix(),
+        },
+    ));
+
+    b.getInstallStep().dependOn(&ext_install.step);
+    b.installDirectory(.{
+        .source_dir = b.path("data"),
+        .install_dir = .prefix,
+        .install_subdir = "data",
+    });
 }
