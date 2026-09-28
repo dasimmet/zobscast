@@ -7,11 +7,11 @@ max_attempts: usize = 30,
 ip: []const u8,
 port: u16,
 allocator: std.mem.Allocator,
+io: std.Io,
 running: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 transport_id: ?[]const u8 = null,
 session_id: ?[]const u8 = null,
 heartbeat_thread: ?std.Thread = null,
-threaded_io: std.Io.Threaded,
 tls_client: ?*std.crypto.tls.Client = null,
 stream: ?std.Io.net.Stream = null,
 
@@ -23,20 +23,18 @@ tls_read_buf: [std.crypto.tls.Client.min_buffer_len]u8 = undefined,
 stream_writer: ?std.Io.net.Stream.Writer = null,
 stream_reader: ?std.Io.net.Stream.Reader = null,
 
-pub fn init(allocator: std.mem.Allocator, ip: []const u8, port: u16) !*Client {
+pub fn init(allocator: std.mem.Allocator, ip: []const u8, port: u16, io: std.Io) !*Client {
     const self = try allocator.create(Client);
     self.* = .{
         .ip = try allocator.dupe(u8, ip),
         .port = port,
         .allocator = allocator,
-        .threaded_io = std.Io.Threaded.init(allocator, .{}),
+        .io = io,
     };
     return self;
 }
 
 pub fn startCast(self: *Client, stream_url: []const u8) !void {
-    const io = self.threaded_io.io();
-
     // Parse IP address
     var ip_bytes: [4]u8 = undefined;
     var part_idx: usize = 0;
@@ -71,7 +69,7 @@ pub fn startCast(self: *Client, stream_url: []const u8) !void {
         self.port,
     });
 
-    const stream = ip_addr.connect(io, .{ .mode = .stream }) catch |err| {
+    const stream = ip_addr.connect(self.io, .{ .mode = .stream }) catch |err| {
         std.log.err("zobscast Client: failed to connect to {s}:{d}: {}", .{
             self.ip,
             self.port,
@@ -86,11 +84,11 @@ pub fn startCast(self: *Client, stream_url: []const u8) !void {
         std.posix.setsockopt(stream.socket.handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, &std.mem.toBytes(tv)) catch {};
     }
 
-    self.stream_writer = stream.writer(io, &self.tls_write_buf);
-    self.stream_reader = stream.reader(io, &self.socket_read_buf);
+    self.stream_writer = stream.writer(self.io, &self.tls_write_buf);
+    self.stream_reader = stream.reader(self.io, &self.socket_read_buf);
 
     var random_buffer: [std.crypto.tls.Client.Options.entropy_len]u8 = undefined;
-    io.random(&random_buffer);
+    self.io.random(&random_buffer);
 
     const tls_ptr = try self.allocator.create(std.crypto.tls.Client);
     tls_ptr.* = try std.crypto.tls.Client.init(
@@ -102,7 +100,7 @@ pub fn startCast(self: *Client, stream_url: []const u8) !void {
             .entropy = &random_buffer,
             .read_buffer = &self.tls_read_buf,
             .write_buffer = &self.socket_write_buf,
-            .realtime_now = std.Io.Timestamp.now(io, .real),
+            .realtime_now = std.Io.Timestamp.now(self.io, .real),
             .allow_truncation_attacks = true,
         },
     );
@@ -466,9 +464,8 @@ fn extractIdsFromValue(self: *Client, val: std.json.Value) void {
 }
 
 fn heartbeatLoop(self: *Client) void {
-    const io = self.threaded_io.io();
     while (self.running.load(.monotonic)) {
-        io.sleep(std.Io.Duration.fromSeconds(5), .real) catch break;
+        self.io.sleep(std.Io.Duration.fromSeconds(5), .real) catch break;
         if (!self.running.load(.monotonic)) break;
 
         self.sendJsonMessage(
@@ -503,7 +500,7 @@ pub fn stop(self: *Client) void {
     }
 
     if (self.stream) |s| {
-        s.close(self.threaded_io.io());
+        s.close(self.io);
         self.stream = null;
     }
 }
@@ -513,7 +510,6 @@ pub fn deinit(self: *Client) void {
     if (self.transport_id) |tid| self.allocator.free(tid);
     if (self.session_id) |sid| self.allocator.free(sid);
     self.allocator.free(self.ip);
-    self.threaded_io.deinit();
     self.allocator.destroy(self);
 }
 

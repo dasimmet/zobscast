@@ -26,6 +26,7 @@ enable_video: bool = true,
 enable_audio: bool = true,
 packet_count: usize = 0,
 allocator: std.mem.Allocator,
+threaded_io: std.Io.Threaded,
 
 pub const info: c.obs_output_info = .{
     .id = "zobscast",
@@ -111,7 +112,7 @@ fn ensureHttpServerUnlocked(self: *Output) !u16 {
         }
     }
 
-    const srv = try Server.init(self.allocator, self);
+    const srv = try Server.init(self.allocator, self, self.threaded_io.io());
     self.server = srv;
     const port = srv.start(0) catch |err| {
         srv.deinit();
@@ -327,6 +328,7 @@ fn create(settings: ?*c.struct_obs_data, ptr: ?*c.struct_obs_output) callconv(.c
         .ptr = ptr.?,
         .settings = settings,
         .allocator = std.heap.c_allocator,
+        .threaded_io = std.Io.Threaded.init(std.heap.c_allocator, .{}),
     };
     active_instance = self;
 
@@ -360,6 +362,7 @@ fn destroy(ctx: ?*anyopaque) callconv(.c) void {
         srv.deinit();
         self.server = null;
     }
+    self.threaded_io.deinit();
 
     if (self.settings) |s| {
         c.obs_data_release(s);
@@ -743,7 +746,7 @@ fn connectThread(self: *Output) void {
 
     // 4. Resolve local IP address facing destination
     var ip_buf: [64]u8 = undefined;
-    const local_ip = Server.getLocalIpFor(target_ip, target_port, &ip_buf) catch |err| {
+    const local_ip = server.getLocalIpFor(target_ip, target_port, &ip_buf) catch |err| {
         std.log.err("zobscast: failed to get local Ip For Client : {s} {}", .{ target_ip, err });
         muxer.deinit();
         server.clearClients();
@@ -772,7 +775,12 @@ fn connectThread(self: *Output) void {
     }
 
     // 6. Connect CastClient and request playback
-    const cast_client = Client.init(self.allocator, target_ip, target_port) catch |err| {
+    const cast_client = Client.init(
+        self.allocator,
+        target_ip,
+        target_port,
+        self.threaded_io.io(),
+    ) catch |err| {
         std.log.err("zobscast: failed to init Cast client: {}", .{err});
         c.obs_output_end_data_capture(self.ptr);
         muxer.deinit();

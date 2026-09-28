@@ -10,22 +10,24 @@ const settings_js = @embedFile("web/app.js");
 
 pub const Server = @This();
 
-server_fd: c.SOCKET = c.INVALID_SOCKET_VALUE,
+listener: ?std.Io.net.Server = null,
 port: u16 = 0,
 running: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
-clients: std.ArrayListUnmanaged(c.SOCKET) = .empty,
+clients: std.ArrayListUnmanaged(std.Io.net.Stream) = .empty,
 client_mutex: std.atomic.Mutex = .unlocked,
 thread: ?std.Thread = null,
 allocator: std.mem.Allocator,
+io: std.Io,
 header_data: std.ArrayListUnmanaged(u8) = .empty,
 header_mutex: std.atomic.Mutex = .unlocked,
 output: ?*Output = null,
 
-pub fn init(allocator: std.mem.Allocator, output: ?*Output) !*Server {
+pub fn init(allocator: std.mem.Allocator, output: ?*Output, io: std.Io) !*Server {
     const self = try allocator.create(Server);
     self.* = .{
         .allocator = allocator,
         .output = output,
+        .io = io,
     };
     return self;
 }
@@ -35,44 +37,24 @@ pub fn start(self: *Server, preferred_port: u16) !u16 {
         return self.port;
     }
 
-    const fd = c.socket(c.AF_INET, c.SOCK_STREAM, 0);
-    if (c.is_socket_valid(fd) == 0) return error.SocketCreationFailed;
+    const io = self.io;
+    var address: std.Io.net.IpAddress = .{ .ip4 = .unspecified(preferred_port) };
+    const listener = blk: {
+        break :blk address.listen(io, .{ .reuse_address = true }) catch |err| {
+            if (preferred_port == 0) return err;
+            address.setPort(0);
+            break :blk address.listen(io, .{ .reuse_address = true }) catch return err;
+        };
+    };
 
-    var opt: c_int = 1;
-    _ = c.setsockopt(fd, c.SOL_SOCKET, c.SO_REUSEADDR, @ptrCast(&opt), @sizeOf(c_int));
-
-    var addr: c.sockaddr_in = std.mem.zeroes(c.sockaddr_in);
-    addr.sin_family = c.AF_INET;
-    c.set_inaddr_any(&addr);
-
-    addr.sin_port = c.htons(preferred_port);
-    if (c.bind(fd, @ptrCast(&addr), @sizeOf(c.sockaddr_in)) < 0) {
-        addr.sin_port = 0;
-        if (c.bind(fd, @ptrCast(&addr), @sizeOf(c.sockaddr_in)) < 0) {
-            _ = c.close(fd);
-            return error.BindFailed;
-        }
-    }
-
-    if (c.listen(fd, 10) < 0) {
-        _ = c.close(fd);
-        return error.ListenFailed;
-    }
-
-    var actual_addr: c.sockaddr_in = std.mem.zeroes(c.sockaddr_in);
-    var addr_len: c.socklen_t = @sizeOf(c.sockaddr_in);
-    if (c.getsockname(fd, @ptrCast(&actual_addr), &addr_len) == 0) {
-        self.port = std.mem.bigToNative(u16, actual_addr.sin_port);
-    } else {
-        self.port = preferred_port;
-    }
-
-    self.server_fd = fd;
+    self.port = listener.socket.address.getPort();
+    self.listener = listener;
     self.running.store(true, .monotonic);
 
     self.thread = std.Thread.spawn(.{}, acceptLoop, .{self}) catch |err| {
-        _ = c.close(fd);
-        self.server_fd = c.INVALID_SOCKET_VALUE;
+        listener.socket.close(io);
+        self.listener = null;
+        self.running.store(false, .monotonic);
         return err;
     };
 
@@ -97,10 +79,9 @@ pub fn broadcast(self: *Server, data: []const u8) void {
 
     var i: usize = 0;
     while (i < self.clients.items.len) {
-        const client_fd = self.clients.items[i];
-        const res = c.send(client_fd, data.ptr, @intCast(data.len), c.MSG_NOSIGNAL);
-        if (res < 0) {
-            _ = c.close(client_fd);
+        const stream = self.clients.items[i];
+        if (!writeStream(stream, self.io, data)) {
+            stream.close(self.io);
             _ = self.clients.swapRemove(i);
         } else {
             i += 1;
@@ -114,43 +95,38 @@ pub fn clearClients(self: *Server) void {
     }
     defer self.client_mutex.unlock();
 
-    for (self.clients.items) |cfd| {
-        _ = c.close(cfd);
+    for (self.clients.items) |stream| {
+        stream.close(self.io);
     }
     self.clients.clearRetainingCapacity();
 }
 
 fn acceptLoop(self: *Server) void {
     while (self.running.load(.monotonic)) {
-        var fds = [_]c.pollfd{.{
-            .fd = self.server_fd,
-            .events = c.POLLIN,
-            .revents = 0,
-        }};
-        const poll_res = c.poll(&fds, 1, 200);
-        if (poll_res <= 0) continue;
+        const stream = self.listener.?.accept(self.io) catch {
+            if (!self.running.load(.monotonic)) break;
+            continue;
+        };
+        if (!self.running.load(.monotonic)) {
+            stream.close(self.io);
+            break;
+        }
 
-        var client_addr: c.sockaddr_in = std.mem.zeroes(c.sockaddr_in);
-        var client_len: c.socklen_t = @sizeOf(c.sockaddr_in);
-        const client_fd = c.accept(self.server_fd, @ptrCast(&client_addr), &client_len);
-        if (c.is_socket_valid(client_fd) == 0) continue;
-
-        var nodelay: c_int = 1;
-        _ = c.setsockopt(client_fd, c.IPPROTO_TCP, c.TCP_NODELAY, @ptrCast(&nodelay), @sizeOf(c_int));
-        var sndbuf: c_int = 128 * 1024;
-        _ = c.setsockopt(client_fd, c.SOL_SOCKET, c.SO_SNDBUF, @ptrCast(&sndbuf), @sizeOf(c_int));
-
-        _ = std.Thread.spawn(.{}, handleClient, .{ self, client_fd }) catch {
-            _ = c.close(client_fd);
+        _ = std.Thread.spawn(.{}, handleClient, .{ self, stream }) catch {
+            stream.close(self.io);
         };
     }
 }
 
-fn handleClient(self: *Server, client_fd: c.SOCKET) void {
+fn handleClient(self: *Server, stream: std.Io.net.Stream) void {
     var req_buf: [4096]u8 = undefined;
-    const n = c.recv(client_fd, &req_buf, req_buf.len, 0);
-    if (n <= 0) {
-        _ = c.close(client_fd);
+    var read_buffers = [_][]u8{&req_buf};
+    const n = stream.read(self.io, &read_buffers) catch {
+        stream.close(self.io);
+        return;
+    };
+    if (n == 0) {
+        stream.close(self.io);
         return;
     }
 
@@ -172,8 +148,8 @@ fn handleClient(self: *Server, client_fd: c.SOCKET) void {
             "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n" ++
             "Access-Control-Allow-Headers: Content-Type\r\n" ++
             "Connection: close\r\n\r\n";
-        _ = c.send(client_fd, cors_hdr.ptr, @intCast(cors_hdr.len), 0);
-        _ = c.close(client_fd);
+        _ = writeStream(stream, self.io, cors_hdr);
+        stream.close(self.io);
         return;
     }
 
@@ -187,7 +163,10 @@ fn handleClient(self: *Server, client_fd: c.SOCKET) void {
             "Connection: close\r\n" ++
             "\r\n";
 
-        _ = c.send(client_fd, http_response_header.ptr, @intCast(http_response_header.len), 0);
+        if (!writeStream(stream, self.io, http_response_header)) {
+            stream.close(self.io);
+            return;
+        }
 
         // Send initialization header (ftyp + moov) if available
         {
@@ -195,7 +174,7 @@ fn handleClient(self: *Server, client_fd: c.SOCKET) void {
                 std.Thread.yield() catch {};
             }
             if (self.header_data.items.len > 0) {
-                _ = c.send(client_fd, self.header_data.items.ptr, @intCast(self.header_data.items.len), 0);
+                _ = writeStream(stream, self.io, self.header_data.items);
                 std.log.info("zobscast HTTP: client connected, sent init header ({d} bytes)", .{self.header_data.items.len});
             } else {
                 std.log.warn("zobscast HTTP: client connected before init header was ready", .{});
@@ -208,8 +187,8 @@ fn handleClient(self: *Server, client_fd: c.SOCKET) void {
             while (!self.client_mutex.tryLock()) {
                 std.Thread.yield() catch {};
             }
-            self.clients.append(self.allocator, client_fd) catch {
-                _ = c.close(client_fd);
+            self.clients.append(self.allocator, stream) catch {
+                stream.close(self.io);
             };
             self.client_mutex.unlock();
         }
@@ -218,79 +197,77 @@ fn handleClient(self: *Server, client_fd: c.SOCKET) void {
 
     // Web Settings UI
     if (std.mem.eql(u8, method, "GET") and (std.mem.eql(u8, path, "/") or std.mem.eql(u8, path, "/settings"))) {
-        self.sendStaticResponse(client_fd, "text/html; charset=utf-8", settings_html);
+        self.sendStaticResponse(stream, "text/html; charset=utf-8", settings_html);
         return;
     }
 
     // Web Settings CSS
     if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/style.css")) {
-        self.sendStaticResponse(client_fd, "text/css; charset=utf-8", settings_css);
+        self.sendStaticResponse(stream, "text/css; charset=utf-8", settings_css);
         return;
     }
 
     // Web Settings JS
     if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/app.js")) {
-        self.sendStaticResponse(client_fd, "application/javascript; charset=utf-8", settings_js);
+        self.sendStaticResponse(stream, "application/javascript; charset=utf-8", settings_js);
         return;
     }
 
     // API: Get current settings
     if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/settings")) {
-        self.handleGetSettings(client_fd);
+        self.handleGetSettings(stream);
         return;
     }
 
     // API: Get locale strings
     if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/locale")) {
-        self.handleGetLocale(client_fd);
+        self.handleGetLocale(stream);
         return;
     }
 
     // API: Get discovered devices
     if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/devices")) {
-        self.handleGetDevices(client_fd);
+        self.handleGetDevices(stream);
         return;
     }
 
     // API: Trigger device scan
     if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/scan")) {
-        self.handleScan(client_fd);
+        self.handleScan(stream);
         return;
     }
 
     // API: Update settings
     if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/settings")) {
-        self.handleUpdateSettings(client_fd, req_slice);
+        self.handleUpdateSettings(stream, req_slice);
         return;
     }
 
     // API: Toggle cast stream
     if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/toggle")) {
-        self.sendJsonResponse(client_fd, "{\"ok\":true}");
+        self.sendJsonResponse(stream, "{\"ok\":true}");
         Output.toggle(null);
         return;
     }
 
     // 404
     const not_found = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-    _ = c.send(client_fd, not_found.ptr, @intCast(not_found.len), 0);
-    _ = c.close(client_fd);
+    _ = writeStream(stream, self.io, not_found);
+    stream.close(self.io);
 }
 
-fn sendStaticResponse(self: *Server, client_fd: c.SOCKET, content_type: []const u8, content: []const u8) void {
-    _ = self;
+fn sendStaticResponse(self: *Server, stream: std.Io.net.Stream, content_type: []const u8, content: []const u8) void {
     var hdr_buf: [256]u8 = undefined;
     const hdr = std.fmt.bufPrint(&hdr_buf, "HTTP/1.1 200 OK\r\n" ++
         "Content-Type: {s}\r\n" ++
         "Content-Length: {d}\r\n" ++
         "Connection: close\r\n\r\n", .{ content_type, content.len }) catch return;
-    _ = c.send(client_fd, hdr.ptr, @intCast(hdr.len), 0);
-    _ = c.send(client_fd, content.ptr, @intCast(content.len), 0);
-    _ = c.close(client_fd);
+    _ = writeStream(stream, self.io, hdr);
+    _ = writeStream(stream, self.io, content);
+    stream.close(self.io);
 }
 
-fn sendJsonResponse(self: *Server, client_fd: c.SOCKET, json: []const u8) void {
-    _ = self;
+fn sendJsonResponse(self: *Server, stream: std.Io.net.Stream, json: []const u8) void {
     var hdr_buf: [256]u8 = undefined;
     const hdr = std.fmt.bufPrint(&hdr_buf, "HTTP/1.1 200 OK\r\n" ++
         "Content-Type: application/json\r\n" ++
@@ -298,12 +275,12 @@ fn sendJsonResponse(self: *Server, client_fd: c.SOCKET, json: []const u8) void {
         "Access-Control-Allow-Headers: *\r\n" ++
         "Content-Length: {d}\r\n" ++
         "Connection: close\r\n\r\n", .{json.len}) catch return;
-    _ = c.send(client_fd, hdr.ptr, @intCast(hdr.len), 0);
-    _ = c.send(client_fd, json.ptr, @intCast(json.len), 0);
-    _ = c.close(client_fd);
+    _ = writeStream(stream, self.io, hdr);
+    _ = writeStream(stream, self.io, json);
+    stream.close(self.io);
 }
 
-fn handleGetSettings(self: *Server, client_fd: c.SOCKET) void {
+fn handleGetSettings(self: *Server, stream: std.Io.net.Stream) void {
     const out_opt = self.output orelse Output.getOrCreateOutput();
     const saved_opt = Output.loadSettings();
     defer if (saved_opt) |s| c.obs_data_release(s);
@@ -352,14 +329,14 @@ fn handleGetSettings(self: *Server, client_fd: c.SOCKET) void {
         .enable_audio = enable_audio,
         .active = is_active,
     }, .{}) catch {
-        self.sendJsonResponse(client_fd, "{\"error\":\"json_error\"}");
+        self.sendJsonResponse(stream, "{\"error\":\"json_error\"}");
         return;
     };
     defer self.allocator.free(json);
-    self.sendJsonResponse(client_fd, json);
+    self.sendJsonResponse(stream, json);
 }
 
-fn handleGetLocale(self: *Server, client_fd: c.SOCKET) void {
+fn handleGetLocale(self: *Server, stream: std.Io.net.Stream) void {
     const json = std.json.Stringify.valueAlloc(self.allocator, .{
         .@"Zobscast.Title" = root.getLocaleString("Zobscast.Title", "Zobscast Settings"),
         .Title = root.getLocaleString("Zobscast.Title", "Zobscast Settings"),
@@ -438,14 +415,14 @@ fn handleGetLocale(self: *Server, client_fd: c.SOCKET) void {
         .@"Zobscast.Toast.NetworkError" = root.getLocaleString("Zobscast.Toast.NetworkError", "Network error"),
         .@"Toast.NetworkError" = root.getLocaleString("Zobscast.Toast.NetworkError", "Network error"),
     }, .{}) catch {
-        self.sendJsonResponse(client_fd, "{}");
+        self.sendJsonResponse(stream, "{}");
         return;
     };
     defer self.allocator.free(json);
-    self.sendJsonResponse(client_fd, json);
+    self.sendJsonResponse(stream, json);
 }
 
-fn handleGetDevices(self: *Server, client_fd: c.SOCKET) void {
+fn handleGetDevices(self: *Server, stream: std.Io.net.Stream) void {
     const out = self.output orelse Output.getOrCreateOutput();
     if (out) |o| {
         o.ensureDiscovery();
@@ -458,18 +435,18 @@ fn handleGetDevices(self: *Server, client_fd: c.SOCKET) void {
             disc.getDevices(self.allocator, &dev_list) catch {};
 
             const json = std.json.Stringify.valueAlloc(self.allocator, dev_list.items, .{}) catch {
-                self.sendJsonResponse(client_fd, "[]");
+                self.sendJsonResponse(stream, "[]");
                 return;
             };
             defer self.allocator.free(json);
-            self.sendJsonResponse(client_fd, json);
+            self.sendJsonResponse(stream, json);
             return;
         }
     }
-    self.sendJsonResponse(client_fd, "[]");
+    self.sendJsonResponse(stream, "[]");
 }
 
-fn handleScan(self: *Server, client_fd: c.SOCKET) void {
+fn handleScan(self: *Server, stream: std.Io.net.Stream) void {
     const out = self.output orelse Output.getOrCreateOutput();
     if (out) |o| {
         o.ensureDiscovery();
@@ -477,7 +454,7 @@ fn handleScan(self: *Server, client_fd: c.SOCKET) void {
             disc.scan(1500) catch {};
         }
     }
-    self.handleGetDevices(client_fd);
+    self.handleGetDevices(stream);
 }
 
 const UpdateSettingsPayload = struct {
@@ -490,21 +467,21 @@ const UpdateSettingsPayload = struct {
     enable_audio: ?bool = null,
 };
 
-fn handleUpdateSettings(self: *Server, client_fd: c.SOCKET, req_slice: []const u8) void {
+fn handleUpdateSettings(self: *Server, stream: std.Io.net.Stream, req_slice: []const u8) void {
     const body_start = std.mem.indexOf(u8, req_slice, "\r\n\r\n");
     const body = if (body_start) |idx| req_slice[idx + 4 ..] else "";
 
     const parsed = std.json.parseFromSlice(UpdateSettingsPayload, self.allocator, body, .{
         .ignore_unknown_fields = true,
     }) catch {
-        self.sendJsonResponse(client_fd, "{\"error\":\"invalid_json\"}");
+        self.sendJsonResponse(stream, "{\"error\":\"invalid_json\"}");
         return;
     };
     defer parsed.deinit();
 
     const saved_opt = Output.loadSettings();
     const settings = (saved_opt orelse c.obs_data_create()) orelse {
-        self.sendJsonResponse(client_fd, "{\"error\":\"obs_data_error\"}");
+        self.sendJsonResponse(stream, "{\"error\":\"obs_data_error\"}");
         return;
     };
     defer c.obs_data_release(settings);
@@ -547,56 +524,35 @@ fn handleUpdateSettings(self: *Server, client_fd: c.SOCKET, req_slice: []const u
         c.obs_output_update(o.ptr, settings);
     }
 
-    self.sendJsonResponse(client_fd, "{\"ok\":true}");
+    self.sendJsonResponse(stream, "{\"ok\":true}");
 }
 
 /// Gets the local IPv4 address that routes towards destination_ip:dest_port
-pub fn getLocalIpFor(dest_ip_str: []const u8, dest_port: u16, buf: []u8) ![]const u8 {
-    const udp_fd = c.socket(c.AF_INET, c.SOCK_DGRAM, 0);
-    if (c.is_socket_valid(udp_fd) == 0) return error.SocketCreationFailed;
-    defer _ = c.close(udp_fd);
+pub fn getLocalIpFor(self: *Server, dest_ip_str: []const u8, dest_port: u16, buf: []u8) ![]const u8 {
+    const destination = try std.Io.net.IpAddress.parse(dest_ip_str, dest_port);
+    const route_probe = try destination.connect(self.io, .{ .mode = .dgram });
+    defer route_probe.close(self.io);
 
-    var dest_addr: c.sockaddr_in = std.mem.zeroes(c.sockaddr_in);
-    dest_addr.sin_family = c.AF_INET;
-    dest_addr.sin_port = c.htons(dest_port);
-
-    var ip_z: [64:0]u8 = undefined;
-    const len = @min(dest_ip_str.len, 63);
-    @memcpy(ip_z[0..len], dest_ip_str[0..len]);
-    ip_z[len] = 0;
-
-    if (c.inet_pton(c.AF_INET, &ip_z, &dest_addr.sin_addr) <= 0) {
-        std.log.err("zobscast Server: inet_pton failed for destination '{s}'", .{&ip_z});
-        return error.InvalidDestinationIp;
-    }
-
-    if (c.connect(udp_fd, @ptrCast(&dest_addr), @sizeOf(c.sockaddr_in)) < 0) {
-        std.log.err("zobscast Server: routing UDP connect failed for '{s}'", .{&ip_z});
-        return error.RoutingFailed;
-    }
-
-    var local_addr: c.sockaddr_in = std.mem.zeroes(c.sockaddr_in);
-    var addr_len: c.socklen_t = @sizeOf(c.sockaddr_in);
-    if (c.getsockname(udp_fd, @ptrCast(&local_addr), &addr_len) < 0) {
-        return error.GetSockNameFailed;
-    }
-
-    var str_buf: [c.INET_ADDRSTRLEN]u8 = undefined;
-    if (c.inet_ntop(c.AF_INET, &local_addr.sin_addr, &str_buf, c.INET_ADDRSTRLEN) == null) {
-        return error.NtopFailed;
-    }
-
-    const ip_len = std.mem.indexOfScalar(u8, &str_buf, 0) orelse str_buf.len;
-    if (buf.len < ip_len) return error.BufferTooSmall;
-    @memcpy(buf[0..ip_len], str_buf[0..ip_len]);
-    return buf[0..ip_len];
+    const local_ip = switch (route_probe.socket.address) {
+        .ip4 => |address| address,
+        .ip6 => return error.UnsupportedAddressFamily,
+    };
+    const local_text = try std.fmt.bufPrint(buf, "{d}.{d}.{d}.{d}", .{
+        local_ip.bytes[0],
+        local_ip.bytes[1],
+        local_ip.bytes[2],
+        local_ip.bytes[3],
+    });
+    return local_text;
 }
 
 pub fn stop(self: *Server) void {
     self.running.store(false, .monotonic);
-    if (c.is_socket_valid(self.server_fd) != 0) {
-        _ = c.close(self.server_fd);
-        self.server_fd = c.INVALID_SOCKET_VALUE;
+    if (self.listener != null) {
+        const wake_address: std.Io.net.IpAddress = .{ .ip4 = .loopback(self.port) };
+        if (wake_address.connect(self.io, .{ .mode = .stream })) |wake_stream| {
+            wake_stream.close(self.io);
+        } else |_| {}
     }
 
     if (self.thread) |t| {
@@ -604,6 +560,10 @@ pub fn stop(self: *Server) void {
         self.thread = null;
     }
 
+    if (self.listener) |listener| {
+        listener.socket.close(self.io);
+    }
+    self.listener = null;
     self.clearClients();
 }
 
@@ -612,4 +572,12 @@ pub fn deinit(self: *Server) void {
     self.clients.deinit(self.allocator);
     self.header_data.deinit(self.allocator);
     self.allocator.destroy(self);
+}
+
+fn writeStream(stream: std.Io.net.Stream, io: std.Io, data: []const u8) bool {
+    var buffer: [4096]u8 = undefined;
+    var writer = stream.writer(io, &buffer);
+    writer.interface.writeAll(data) catch return false;
+    writer.interface.flush() catch return false;
+    return true;
 }
