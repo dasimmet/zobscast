@@ -26,7 +26,7 @@ allocator: std.mem.Allocator,
 
 pub const info: c.obs_output_info = .{
     .id = "zobscast",
-    .flags = c.OBS_OUTPUT_VIDEO | c.OBS_OUTPUT_ENCODED,
+    .flags = c.OBS_OUTPUT_VIDEO | c.OBS_OUTPUT_AUDIO | c.OBS_OUTPUT_ENCODED,
     .get_name = name,
     .create = create,
     .destroy = destroy,
@@ -37,6 +37,7 @@ pub const info: c.obs_output_info = .{
     .get_defaults = get_defaults,
     .get_properties = get_properties,
     .encoded_video_codecs = "h264",
+    .encoded_audio_codecs = "aac",
 };
 
 pub fn ensureDiscovery(self: *Output) void {
@@ -172,7 +173,7 @@ pub fn saveSettings(settings: *c.obs_data_t) void {
     }
 }
 
-pub fn ensureEncoder(output: *c.obs_output_t) void {
+pub fn ensureVideoEncoder(output: *c.obs_output_t) void {
     if (c.obs_output_get_video_encoder(output) != null) return;
 
     const saved = loadSettings();
@@ -200,7 +201,7 @@ pub fn ensureEncoder(output: *c.obs_output_t) void {
     const enc_id: [*c]const u8 = "obs_x264";
     const enc = c.obs_video_encoder_create(enc_id, "zobscast_enc", enc_settings, null);
     if (enc == null) {
-        c.blog(c.LOG_ERROR, "zobscast: failed to create video encoder '%s'", enc_id);
+        std.log.err("zobscast: failed to create video encoder '{s}'", .{enc_id});
         return;
     }
     c.obs_encoder_set_video(enc.?, c.obs_get_video());
@@ -209,12 +210,51 @@ pub fn ensureEncoder(output: *c.obs_output_t) void {
     // while attached to the output.
 
     const check = c.obs_output_get_video_encoder(output);
-    c.blog(c.LOG_INFO, "zobscast: attached video encoder '%s' (%lld kbps, preset=%s, tune=zerolatency, enc=%p, verified=%p)", enc_id, br, preset, enc, check);
+    std.log.info("zobscast: attached video encoder '{s}' ({d} kbps, preset={s}, tune=zerolatency, enc={?*}, verified={?*})", .{ enc_id, br, preset, enc, check });
+}
+
+pub fn ensureAudioEncoder(output: *c.obs_output_t) void {
+    if (c.obs_output_get_audio_encoder(output, 0) != null) return;
+
+    const saved = loadSettings();
+    const settings = saved orelse c.obs_data_create();
+    defer c.obs_data_release(settings);
+
+    const aenc_settings = c.obs_data_create();
+    defer c.obs_data_release(aenc_settings);
+
+    const audio_bitrate = c.obs_data_get_int(settings, "audio_bitrate");
+    const abr: c_longlong = if (audio_bitrate > 0) audio_bitrate else 160;
+    c.obs_data_set_int(aenc_settings, "bitrate", abr);
+
+    const aenc_id: [*c]const u8 = "ffmpeg_aac";
+    const aenc = c.obs_audio_encoder_create(aenc_id, "zobscast_aenc", aenc_settings, 0, null);
+    if (aenc == null) {
+        std.log.err("zobscast: failed to create audio encoder '{s}'", .{aenc_id});
+        return;
+    }
+    const audio = c.obs_get_audio();
+    if (audio == null) {
+        std.log.err("zobscast: obs_get_audio returned null", .{});
+        return;
+    }
+    c.obs_encoder_set_audio(aenc.?, audio);
+    c.obs_output_set_audio_encoder(output, aenc.?, 0);
+    // Note: Do NOT call obs_encoder_release here! The encoder must remain referenced
+    // while attached to the output.
+
+    const check = c.obs_output_get_audio_encoder(output, 0);
+    std.log.info("zobscast: attached audio encoder '{s}' ({d} kbps, aenc={?*}, verified={?*})", .{ aenc_id, abr, aenc, check });
+}
+
+pub fn ensureEncoder(output: *c.obs_output_t) void {
+    ensureVideoEncoder(output);
+    ensureAudioEncoder(output);
 }
 
 pub fn toggle(ctx: ?*anyopaque) callconv(.c) void {
     _ = ctx;
-    c.blog(c.LOG_INFO, "zobscast toggle");
+    std.log.info("zobscast toggle", .{});
     const output = c.obs_get_output_by_name(info.id);
     if (output) |out| {
         defer c.obs_output_release(out);
@@ -226,7 +266,7 @@ pub fn toggle(ctx: ?*anyopaque) callconv(.c) void {
         }
     } else {
         autostart() catch |err| {
-            c.blog(c.LOG_ERROR, "zobscast autostart error: %s", @errorName(err).ptr);
+            std.log.err("zobscast autostart error: {}", .{err});
         };
     }
 }
@@ -249,13 +289,13 @@ pub fn autostart() !void {
 
     const output = c.obs_output_create(info.id, info.id, settings, null);
     if (output == null) {
-        c.blog(c.LOG_ERROR, "zobscast failed to create output");
+        std.log.err("zobscast failed to create output", .{});
         return;
     }
 
     ensureEncoder(output.?);
     const started = c.obs_output_start(output.?);
-    c.blog(c.LOG_INFO, "zobscast autostart: started=%d", @as(c_int, if (started) 1 else 0));
+    std.log.info("zobscast autostart: started={}", .{started});
 }
 
 fn name(ctx: ?*anyopaque) callconv(.c) [*c]const u8 {
@@ -264,7 +304,7 @@ fn name(ctx: ?*anyopaque) callconv(.c) [*c]const u8 {
 }
 
 fn create(settings: ?*c.struct_obs_data, ptr: ?*c.struct_obs_output) callconv(.c) ?*anyopaque {
-    c.blog(c.LOG_INFO, "zobscast output create");
+    std.log.info("zobscast output create", .{});
     const self = std.heap.c_allocator.create(Output) catch @panic("zobscast create alloc error");
 
     self.* = .{
@@ -291,7 +331,7 @@ fn create(settings: ?*c.struct_obs_data, ptr: ?*c.struct_obs_output) callconv(.c
 }
 
 fn destroy(ctx: ?*anyopaque) callconv(.c) void {
-    c.blog(c.LOG_INFO, "zobscast destroy");
+    std.log.info("zobscast destroy", .{});
     const self: *Output = @ptrCast(@alignCast(ctx.?));
 
     if (active_instance == self) {
@@ -313,7 +353,7 @@ fn destroy(ctx: ?*anyopaque) callconv(.c) void {
     }
 
     self.allocator.destroy(self);
-    c.blog(c.LOG_INFO, "zobscast destroy finished");
+    std.log.info("zobscast destroy finished", .{});
 }
 
 fn update(ctx: ?*anyopaque, settings: ?*c.obs_data_t) callconv(.c) void {
@@ -333,12 +373,12 @@ pub fn applySettings(self: *Output, settings: *c.obs_data_t) void {
             self.allocator.free(self.sink_ip);
         }
         self.sink_ip = self.allocator.dupe(u8, slice) catch &[_]u8{};
-        c.blog(c.LOG_INFO, "zobscast updated sink to: %.*s", @as(c_int, @intCast(self.sink_ip.len)), self.sink_ip.ptr);
+        std.log.info("zobscast updated sink to: {s}", .{self.sink_ip});
     }
 }
 
 pub fn get_defaults(settings: ?*c.obs_data_t) callconv(.c) void {
-    c.blog(c.LOG_INFO, "zobscast get_defaults");
+    std.log.info("zobscast get_defaults", .{});
     c.obs_data_set_default_string(settings, "sink", "");
     c.obs_data_set_default_int(settings, "bitrate", 2500);
     c.obs_data_set_default_string(settings, "preset", "ultrafast");
@@ -347,7 +387,7 @@ pub fn get_defaults(settings: ?*c.obs_data_t) callconv(.c) void {
 }
 
 pub fn get_properties(ctx: ?*anyopaque) callconv(.c) ?*c.obs_properties_t {
-    c.blog(c.LOG_INFO, "zobscast get_properties");
+    std.log.info("zobscast get_properties", .{});
     const props = c.obs_properties_create();
 
     const is_active = if (c.obs_get_output_by_name(info.id)) |out| blk: {
@@ -451,18 +491,18 @@ fn refreshClicked(props: ?*c.obs_properties_t, property: ?*c.obs_property_t, dat
     _ = props;
     _ = property;
     const self: *Output = @ptrCast(@alignCast(data));
-    c.blog(c.LOG_INFO, "zobscast scanning for devices...");
+    std.log.info("zobscast scanning for devices...", .{});
     self.ensureDiscovery();
     if (self.discovery) |*disc| {
         disc.scan(1500) catch |err| {
-            c.blog(c.LOG_ERROR, "zobscast discovery error: %s", @errorName(err).ptr);
+            std.log.err("zobscast discovery error: {}", .{err});
         };
     }
     return true;
 }
 
 fn start(ctx: ?*anyopaque) callconv(.c) bool {
-    c.blog(c.LOG_INFO, "zobscast start");
+    std.log.info("zobscast start", .{});
     const self: *Output = @ptrCast(@alignCast(ctx.?));
 
     while (!self.mutex.tryLock()) {
@@ -472,17 +512,20 @@ fn start(ctx: ?*anyopaque) callconv(.c) bool {
 
     if (self.active) return true;
 
+    ensureEncoder(self.ptr);
+
     const venc = c.obs_output_get_video_encoder(self.ptr);
+    const aenc = c.obs_output_get_audio_encoder(self.ptr, 0);
     const act = c.obs_output_active(self.ptr);
-    c.blog(c.LOG_INFO, "zobscast start check: ptr=%p venc=%p active=%d", self.ptr, venc, @as(c_int, if (act) 1 else 0));
+    std.log.info("zobscast start check: ptr={?*} venc={?*} aenc={?*} active={}", .{ self.ptr, venc, aenc, act });
 
     // Check if output can begin capture and initialize encoders (must be done in start callback)
     if (!c.obs_output_can_begin_data_capture(self.ptr, 0)) {
-        c.blog(c.LOG_ERROR, "zobscast start: obs_output_can_begin_data_capture returned false (venc=%p active=%d)", venc, @as(c_int, if (act) 1 else 0));
+        std.log.err("zobscast start: obs_output_can_begin_data_capture returned false (venc={?*} aenc={?*} active={})", .{ venc, aenc, act });
         return false;
     }
     if (!c.obs_output_initialize_encoders(self.ptr, 0)) {
-        c.blog(c.LOG_ERROR, "zobscast start: obs_output_initialize_encoders returned false");
+        std.log.err("zobscast start: obs_output_initialize_encoders returned false", .{});
         return false;
     }
 
@@ -495,7 +538,7 @@ fn start(ctx: ?*anyopaque) callconv(.c) bool {
     // Spawn the connection thread — network connection and begin_data_capture
     // happen in this background thread.
     self.connect_thread = std.Thread.spawn(.{}, connectThread, .{self}) catch |err| {
-        c.blog(c.LOG_ERROR, "zobscast: failed to spawn connect thread: %s", @errorName(err).ptr);
+        std.log.err("zobscast: failed to spawn connect thread: {}", .{err});
         c.obs_output_signal_stop(self.ptr, c.OBS_OUTPUT_CONNECT_FAILED);
         return false;
     };
@@ -543,16 +586,16 @@ fn connectThread(self: *Output) void {
 
     const target_ip = cleanIp(raw_target);
     if (target_ip.len == 0) {
-        c.blog(c.LOG_ERROR, "zobscast: no cast sink selected! Open Output properties to select or enter a device IP.");
+        std.log.err("zobscast: no cast sink selected! Open Output properties to select or enter a device IP.", .{});
         c.obs_output_signal_stop(self.ptr, c.OBS_OUTPUT_BAD_PATH);
         return;
     }
 
-    c.blog(c.LOG_INFO, "zobscast start: casting to %.*s (from setting '%.*s')", @as(c_int, @intCast(target_ip.len)), target_ip.ptr, @as(c_int, @intCast(raw_target.len)), raw_target.ptr);
+    std.log.info("zobscast start: casting to {s} (from setting '{s}')", .{ target_ip, raw_target });
 
     // 1. Ensure HTTP Server is running
     _ = self.ensureHttpServerUnlocked() catch |err| {
-        c.blog(c.LOG_ERROR, "zobscast: failed to start HTTP server: %s", @errorName(err).ptr);
+        std.log.err("zobscast: failed to start HTTP server: {}", .{err});
         c.obs_output_signal_stop(self.ptr, c.OBS_OUTPUT_CONNECT_FAILED);
         return;
     };
@@ -579,15 +622,51 @@ fn connectThread(self: *Output) void {
 
     if (venc) |ve| {
         if (c.obs_encoder_get_extra_data(ve, &extra_data_ptr, &extra_data_size) and extra_data_ptr != null and extra_data_size > 0) {
-            c.blog(c.LOG_INFO, "zobscast: got video encoder extradata (%zu bytes)", extra_data_size);
+            std.log.info("zobscast: got video encoder extradata ({d} bytes)", .{extra_data_size});
             extradata_slice = extra_data_ptr[0..extra_data_size];
         } else {
-            c.blog(c.LOG_WARNING, "zobscast: obs_encoder_get_extra_data returned no data");
+            std.log.warn("zobscast: obs_encoder_get_extra_data for video returned no data", .{});
         }
     }
 
-    const muxer = Muxer.init(self.allocator, onMuxedData, self, width, height, extradata_slice) catch |err| {
-        c.blog(c.LOG_ERROR, "zobscast: failed to initialize FFmpeg muxer: %s", @errorName(err).ptr);
+    const aenc = c.obs_output_get_audio_encoder(self.ptr, 0);
+    var a_extra_ptr: [*c]u8 = null;
+    var a_extra_size: usize = 0;
+    var a_extradata_slice: ?[]const u8 = null;
+    var audio_sample_rate: u32 = 0;
+    var audio_channels: u32 = 0;
+
+    if (aenc) |ae| {
+        audio_sample_rate = c.obs_encoder_get_sample_rate(ae);
+        if (c.obs_get_audio()) |a| {
+            audio_channels = @intCast(c.audio_output_get_channels(a));
+            if (audio_sample_rate == 0) {
+                audio_sample_rate = c.audio_output_get_sample_rate(a);
+            }
+        }
+        if (audio_channels == 0) audio_channels = 2;
+        if (audio_sample_rate == 0) audio_sample_rate = 48000;
+
+        if (c.obs_encoder_get_extra_data(ae, &a_extra_ptr, &a_extra_size) and a_extra_ptr != null and a_extra_size > 0) {
+            std.log.info("zobscast: got audio encoder extradata ({d} bytes)", .{a_extra_size});
+            a_extradata_slice = a_extra_ptr[0..a_extra_size];
+        } else {
+            std.log.warn("zobscast: obs_encoder_get_extra_data for audio returned no data", .{});
+        }
+    }
+
+    const muxer = Muxer.init(
+        self.allocator,
+        onMuxedData,
+        self,
+        width,
+        height,
+        extradata_slice,
+        audio_sample_rate,
+        audio_channels,
+        a_extradata_slice,
+    ) catch |err| {
+        std.log.err("zobscast: failed to initialize FFmpeg muxer: {}", .{err});
         server.clearClients();
         c.obs_output_signal_stop(self.ptr, c.OBS_OUTPUT_ENCODE_ERROR);
         return;
@@ -608,11 +687,11 @@ fn connectThread(self: *Output) void {
         .{ local_ip, server.port },
         0,
     ) catch "http://127.0.0.1:8010/live.mp4";
-    c.blog(c.LOG_INFO, "zobscast: stream endpoint prepared at %s", stream_url.ptr);
+    std.log.info("zobscast: stream endpoint prepared at {s}", .{stream_url});
 
     // 5. Begin data capture (encoders already initialized in start())
     if (!c.obs_output_begin_data_capture(self.ptr, 0)) {
-        c.blog(c.LOG_ERROR, "zobscast: obs_output_begin_data_capture failed");
+        std.log.err("zobscast: obs_output_begin_data_capture failed", .{});
         muxer.deinit();
         server.clearClients();
         self.muxer = null;
@@ -622,7 +701,7 @@ fn connectThread(self: *Output) void {
 
     // 6. Connect CastClient and request playback
     const cast_client = Client.init(self.allocator, target_ip, 8009) catch |err| {
-        c.blog(c.LOG_ERROR, "zobscast: failed to init Cast client: %s", @errorName(err).ptr);
+        std.log.err("zobscast: failed to init Cast client: {}", .{err});
         c.obs_output_end_data_capture(self.ptr);
         muxer.deinit();
         server.clearClients();
@@ -633,7 +712,7 @@ fn connectThread(self: *Output) void {
     self.cast_client = cast_client;
 
     cast_client.startCast(stream_url) catch |err| {
-        c.blog(c.LOG_ERROR, "zobscast: failed to connect to Chromecast: %s", @errorName(err).ptr);
+        std.log.err("zobscast: failed to connect to Chromecast: {}", .{err});
         c.obs_output_end_data_capture(self.ptr);
         cast_client.deinit();
         muxer.deinit();
@@ -645,7 +724,7 @@ fn connectThread(self: *Output) void {
     };
 
     self.active = true;
-    c.blog(c.LOG_INFO, "zobscast stream live at %s", stream_url.ptr);
+    std.log.info("zobscast stream live at {s}", .{stream_url});
     gui.setActive(true);
 }
 
@@ -659,7 +738,7 @@ fn onMuxedData(ctx: ?*anyopaque, data: []const u8) void {
 
 fn stop(ctx: ?*anyopaque, it: u64) callconv(.c) void {
     _ = it;
-    c.blog(c.LOG_INFO, "zobscast stop");
+    std.log.info("zobscast stop", .{});
     const self: *Output = @ptrCast(@alignCast(ctx.?));
 
     // Wait for any in-progress connection attempt to finish.
@@ -705,16 +784,20 @@ fn get_data(ctx: ?*anyopaque, d: [*c]c.struct_encoder_packet) callconv(.c) void 
         return;
     }
 
+    const is_audio = (d.*.type == c.OBS_ENCODER_AUDIO);
+
     self.packet_count +%= 1;
     if (self.debug_logging and (self.packet_count % 120 == 0)) {
-        c.blog(
-            c.LOG_INFO,
-            "zobscast packet #%u: size=%u pts=%ld dts=%ld keyframe=%d",
-            @as(c_uint, @intCast(self.packet_count)),
-            @as(c_uint, @intCast(d.*.size)),
-            d.*.pts,
-            d.*.dts,
-            @as(c_int, if (d.*.keyframe) 1 else 0),
+        std.log.info(
+            "zobscast packet #{d}: type={s} size={d} pts={d} dts={d} keyframe={}",
+            .{
+                self.packet_count,
+                if (is_audio) "audio" else "video",
+                d.*.size,
+                d.*.pts,
+                d.*.dts,
+                d.*.keyframe,
+            },
         );
     }
 
@@ -727,8 +810,9 @@ fn get_data(ctx: ?*anyopaque, d: [*c]c.struct_encoder_packet) callconv(.c) void 
             d.*.keyframe,
             d.*.timebase_num,
             d.*.timebase_den,
+            is_audio,
         ) catch |err| {
-            c.blog(c.LOG_ERROR, "zobscast muxer writePacket error: %s", @errorName(err).ptr);
+            std.log.err("zobscast muxer writePacket error: {}", .{err});
         };
     }
 }

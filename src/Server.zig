@@ -76,7 +76,7 @@ pub fn start(self: *Server, preferred_port: u16) !u16 {
         return err;
     };
 
-    c.blog(c.LOG_INFO, "zobscast HTTP streaming server listening on port %u", self.port);
+    std.log.info("zobscast HTTP streaming server listening on port {d}", .{self.port});
     return self.port;
 }
 
@@ -162,7 +162,7 @@ fn handleClient(self: *Server, client_fd: c.SOCKET) void {
     const method = parts.next() orelse "";
     const path = parts.next() orelse "";
 
-    c.blog(c.LOG_INFO, "zobscast HTTP: %.*s %.*s", @as(c_int, @intCast(method.len)), method.ptr, @as(c_int, @intCast(path.len)), path.ptr);
+    std.log.info("zobscast HTTP: {s} {s}", .{ method, path });
 
     // CORS preflight
     if (std.mem.eql(u8, method, "OPTIONS")) {
@@ -196,9 +196,9 @@ fn handleClient(self: *Server, client_fd: c.SOCKET) void {
             }
             if (self.header_data.items.len > 0) {
                 _ = c.send(client_fd, self.header_data.items.ptr, @intCast(self.header_data.items.len), 0);
-                c.blog(c.LOG_INFO, "zobscast HTTP: client connected, sent init header (%u bytes)", @as(c_uint, @intCast(self.header_data.items.len)));
+                std.log.info("zobscast HTTP: client connected, sent init header ({d} bytes)", .{self.header_data.items.len});
             } else {
-                c.blog(c.LOG_WARNING, "zobscast HTTP: client connected before init header was ready");
+                std.log.warn("zobscast HTTP: client connected before init header was ready", .{});
             }
             self.header_mutex.unlock();
         }
@@ -519,12 +519,12 @@ pub fn getLocalIpFor(dest_ip_str: []const u8, buf: []u8) ![]const u8 {
     ip_z[len] = 0;
 
     if (c.inet_pton(c.AF_INET, &ip_z, &dest_addr.sin_addr) <= 0) {
-        c.blog(c.LOG_ERROR, "zobscast Server: inet_pton failed for destination '%s'", &ip_z);
+        std.log.err("zobscast Server: inet_pton failed for destination '{s}'", .{&ip_z});
         return error.InvalidDestinationIp;
     }
 
     if (c.connect(udp_fd, @ptrCast(&dest_addr), @sizeOf(c.sockaddr_in)) < 0) {
-        c.blog(c.LOG_ERROR, "zobscast Server: routing UDP connect failed for '%s'", &ip_z);
+        std.log.err("zobscast Server: routing UDP connect failed for '{s}'", .{&ip_z});
         return error.RoutingFailed;
     }
 

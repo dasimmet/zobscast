@@ -181,7 +181,7 @@ fn loadQt() void {
     }
 
     if (h_widgets) |hw| {
-        c.blog(c.LOG_INFO, "zobscast GUI: Qt6Widgets loaded");
+        std.log.info("zobscast GUI: Qt6Widgets loaded", .{});
         if (loadSymbol(hw, "_ZNK11QMainWindow7menuBarEv")) |sym| {
             fn_menu_bar = @ptrCast(@alignCast(sym));
         }
@@ -222,7 +222,7 @@ fn loadQt() void {
     }
 
     if (h_web) |hweb| {
-        c.blog(c.LOG_INFO, "zobscast GUI: Qt6WebEngineWidgets loaded");
+        std.log.info("zobscast GUI: Qt6WebEngineWidgets loaded", .{});
         if (loadSymbol(hweb, "_ZN14QWebEngineViewC1EP7QWidget")) |sym| {
             fn_web_ctor = @ptrCast(@alignCast(sym));
         }
@@ -240,15 +240,15 @@ fn loadQt() void {
     }
 
     if (fn_set_checkable != null and fn_set_checked != null) {
-        c.blog(c.LOG_INFO, "zobscast GUI: Qt6 action checkmark support loaded");
+        std.log.info("zobscast GUI: Qt6 action checkmark support loaded", .{});
     }
     if (fn_status_bar != null and fn_status_show != null) {
-        c.blog(c.LOG_INFO, "zobscast GUI: Qt6 status bar support loaded");
+        std.log.info("zobscast GUI: Qt6 status bar support loaded", .{});
     }
     if (fn_web_ctor != null and fn_web_load != null) {
-        c.blog(c.LOG_INFO, "zobscast GUI: Qt6 WebEngineView support loaded");
+        std.log.info("zobscast GUI: Qt6 WebEngineView support loaded", .{});
     } else {
-        c.blog(c.LOG_INFO, "zobscast GUI: Qt6 WebEngineView not found, will use desktop browser fallback");
+        std.log.info("zobscast GUI: Qt6 WebEngineView not found, will use desktop browser fallback", .{});
     }
 }
 
@@ -266,7 +266,7 @@ pub fn addToggleAction(name: [*c]const u8, callback: c.obs_frontend_cb, ctx: ?*a
     if (cached_action) |act| {
         if (fn_set_checkable) |sc| {
             sc(act, true);
-            c.blog(c.LOG_INFO, "zobscast GUI: menu item made checkable");
+            std.log.info("zobscast GUI: menu item made checkable", .{});
         }
     }
 }
@@ -343,37 +343,37 @@ fn updateStatusBar(active: bool) void {
 /// Opens the settings URL inside a native Qt WebEngine window if available,
 /// or falls back to the system/desktop web browser.
 pub fn openSettings(url: [:0]const u8) void {
-    c.blog(c.LOG_INFO, "zobscast GUI: openSettings called for %s", url.ptr);
+    std.log.info("zobscast GUI: openSettings called for {s}", .{url});
     loadQt();
 
     if (openQtWebEngine(url)) {
-        c.blog(c.LOG_INFO, "zobscast GUI: opened native Qt WebEngine settings view");
+        std.log.info("zobscast GUI: opened native Qt WebEngine settings view", .{});
         return;
     }
 
-    c.blog(c.LOG_INFO, "zobscast GUI: falling back to external browser");
+    std.log.info("zobscast GUI: falling back to external browser", .{});
     openExternalBrowser(url);
 }
 
 fn openQtWebEngine(url: [:0]const u8) bool {
     const ctor = fn_web_ctor orelse {
-        c.blog(c.LOG_INFO, "zobscast GUI: fn_web_ctor is null");
+        std.log.info("zobscast GUI: fn_web_ctor is null", .{});
         return false;
     };
     const load_fn = fn_web_load orelse {
-        c.blog(c.LOG_INFO, "zobscast GUI: fn_web_load is null");
+        std.log.info("zobscast GUI: fn_web_load is null", .{});
         return false;
     };
     const show_fn = fn_widget_show orelse {
-        c.blog(c.LOG_INFO, "zobscast GUI: fn_widget_show is null");
+        std.log.info("zobscast GUI: fn_widget_show is null", .{});
         return false;
     };
     const qurl_from_encoded = fn_qurl_from_encoded orelse {
-        c.blog(c.LOG_INFO, "zobscast GUI: fn_qurl_from_encoded is null");
+        std.log.info("zobscast GUI: fn_qurl_from_encoded is null", .{});
         return false;
     };
     const qurl_dtor = fn_qurl_dtor orelse {
-        c.blog(c.LOG_INFO, "zobscast GUI: fn_qurl_dtor is null");
+        std.log.info("zobscast GUI: fn_qurl_dtor is null", .{});
         return false;
     };
 
@@ -438,7 +438,7 @@ fn openExternalBrowser(url: [:0]const u8) void {
                 const res = open_url(&qurl);
                 qurl_dtor(&qurl);
                 if (res) {
-                    c.blog(c.LOG_INFO, "zobscast GUI: opened settings via QDesktopServices");
+                    std.log.info("zobscast GUI: opened settings via QDesktopServices", .{});
                     return;
                 }
             }
@@ -446,7 +446,7 @@ fn openExternalBrowser(url: [:0]const u8) void {
     }
 
     // 2. OS process launcher fallback
-    c.blog(c.LOG_INFO, "zobscast GUI: launching settings in OS default browser: %s", url.ptr);
+    std.log.info("zobscast GUI: launching settings in OS default browser: {s}", .{url});
     var cmd_buf: [512:0]u8 = undefined;
     if (comptime builtin.os.tag == .windows) {
         if (std.mem.printSentinel(&cmd_buf, "cmd.exe /c start \"\" \"{s}\"", .{url}, 0)) |cmd| {

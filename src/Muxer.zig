@@ -1,6 +1,5 @@
 const std = @import("std");
 const av = @import("av");
-const c = @import("c");
 
 extern fn avformat_alloc_output_context2(
     ctx: *?*av.FormatContext,
@@ -15,6 +14,7 @@ extern fn av_write_trailer(s: *av.FormatContext) c_int;
 extern fn av_write_frame(s: *av.FormatContext, pkt: ?*av.Packet) c_int;
 extern fn av_interleaved_write_frame(s: *av.FormatContext, pkt: ?*av.Packet) c_int;
 extern fn avio_flush(s: *av.IOContext) void;
+extern fn av_channel_layout_default(ch_layout: *anyopaque, nb_channels: c_int) void;
 
 extern fn avio_alloc_context(
     buffer: [*]u8,
@@ -48,7 +48,8 @@ pub const Muxer = @This();
 
 format_ctx: ?*av.FormatContext = null,
 avio_ctx: ?*av.IOContext = null,
-stream: ?*av.Stream = null,
+video_stream: ?*av.Stream = null,
+audio_stream: ?*av.Stream = null,
 pkt: ?*av.Packet = null,
 avio_buffer: ?[*]u8 = null,
 on_data: OnDataFn,
@@ -57,8 +58,10 @@ header_data: std.ArrayListUnmanaged(u8) = .empty,
 
 header_done: bool = false,
 allocator: std.mem.Allocator,
-pts_offset: i64 = 0,
-has_pts_offset: bool = false,
+video_pts_offset: i64 = 0,
+has_video_offset: bool = false,
+audio_pts_offset: i64 = 0,
+has_audio_offset: bool = false,
 
 pub fn init(
     allocator: std.mem.Allocator,
@@ -66,9 +69,12 @@ pub fn init(
     data_ctx: ?*anyopaque,
     width: u32,
     height: u32,
-    extradata: ?[]const u8,
+    video_extradata: ?[]const u8,
+    audio_sample_rate: u32,
+    audio_channels: u32,
+    audio_extradata: ?[]const u8,
 ) !*Muxer {
-    c.blog(c.LOG_INFO, "zobscast Muxer: initializing in-memory FFmpeg muxer (%ux%u)...", width, height);
+    std.log.info("zobscast Muxer: initializing in-memory FFmpeg muxer ({d}x{d}, audio={d}Hz/{d}ch)...", .{ width, height, audio_sample_rate, audio_channels });
     const self = try allocator.create(Muxer);
     self.* = .{
         .on_data = on_data,
@@ -79,7 +85,7 @@ pub fn init(
 
     const avio_buf_size: usize = 16 * 1024;
     self.avio_buffer = av_malloc(avio_buf_size) orelse {
-        c.blog(c.LOG_ERROR, "zobscast Muxer: av_malloc failed");
+        std.log.err("zobscast Muxer: av_malloc failed", .{});
         return error.OutOfMemory;
     };
 
@@ -92,37 +98,61 @@ pub fn init(
         writePacketCb,
         null,
     ) orelse {
-        c.blog(c.LOG_ERROR, "zobscast Muxer: avio_alloc_context failed");
+        std.log.err("zobscast Muxer: avio_alloc_context failed", .{});
         return error.AvioAllocFailed;
     };
 
     var fmt_ctx: ?*av.FormatContext = null;
     if (avformat_alloc_output_context2(&fmt_ctx, null, "mp4", null) < 0 or fmt_ctx == null) {
-        c.blog(c.LOG_ERROR, "zobscast Muxer: avformat_alloc_output_context2 failed");
+        std.log.err("zobscast Muxer: avformat_alloc_output_context2 failed", .{});
         return error.AvformatAllocFailed;
     }
     self.format_ctx = fmt_ctx;
     self.format_ctx.?.pb = self.avio_ctx;
 
-    self.stream = avformat_new_stream(self.format_ctx.?, null) orelse {
-        c.blog(c.LOG_ERROR, "zobscast Muxer: avformat_new_stream failed");
+    self.video_stream = avformat_new_stream(self.format_ctx.?, null) orelse {
+        std.log.err("zobscast Muxer: avformat_new_stream for video failed", .{});
         return error.NewStreamFailed;
     };
 
-    self.stream.?.codecpar.codec_type = .VIDEO;
-    self.stream.?.codecpar.codec_id = .H264;
-    self.stream.?.codecpar.width = @intCast(width);
-    self.stream.?.codecpar.height = @intCast(height);
-    self.stream.?.time_base = .{ .num = 1, .den = 1000 };
+    self.video_stream.?.codecpar.codec_type = .VIDEO;
+    self.video_stream.?.codecpar.codec_id = .H264;
+    self.video_stream.?.codecpar.width = @intCast(width);
+    self.video_stream.?.codecpar.height = @intCast(height);
+    self.video_stream.?.time_base = .{ .num = 1, .den = 1000 };
 
-    if (extradata) |extra| {
+    if (video_extradata) |extra| {
         if (extra.len > 0) {
             const extra_buf = av_malloc(extra.len + 64) orelse return error.OutOfMemory;
             @memcpy(extra_buf[0..extra.len], extra);
             @memset(extra_buf[extra.len .. extra.len + 64], 0);
-            self.stream.?.codecpar.extradata = extra_buf;
-            self.stream.?.codecpar.extradata_size = @intCast(extra.len);
-            c.blog(c.LOG_INFO, "zobscast Muxer: set codecpar.extradata (%u bytes)", @as(c_uint, @intCast(extra.len)));
+            self.video_stream.?.codecpar.extradata = extra_buf;
+            self.video_stream.?.codecpar.extradata_size = @intCast(extra.len);
+            std.log.info("zobscast Muxer: set video codecpar.extradata ({d} bytes)", .{extra.len});
+        }
+    }
+
+    if (audio_sample_rate > 0 and audio_channels > 0) {
+        self.audio_stream = avformat_new_stream(self.format_ctx.?, null) orelse {
+            std.log.err("zobscast Muxer: avformat_new_stream for audio failed", .{});
+            return error.NewStreamFailed;
+        };
+
+        self.audio_stream.?.codecpar.codec_type = .AUDIO;
+        self.audio_stream.?.codecpar.codec_id = .AAC;
+        self.audio_stream.?.codecpar.sample_rate = @intCast(audio_sample_rate);
+        av_channel_layout_default(&self.audio_stream.?.codecpar.ch_layout, @intCast(audio_channels));
+        self.audio_stream.?.time_base = .{ .num = 1, .den = @intCast(audio_sample_rate) };
+
+        if (audio_extradata) |extra| {
+            if (extra.len > 0) {
+                const extra_buf = av_malloc(extra.len + 64) orelse return error.OutOfMemory;
+                @memcpy(extra_buf[0..extra.len], extra);
+                @memset(extra_buf[extra.len .. extra.len + 64], 0);
+                self.audio_stream.?.codecpar.extradata = extra_buf;
+                self.audio_stream.?.codecpar.extradata_size = @intCast(extra.len);
+                std.log.info("zobscast Muxer: set audio codecpar.extradata ({d} bytes)", .{extra.len});
+            }
         }
     }
 
@@ -133,14 +163,14 @@ pub fn init(
     const write_ret = avformat_write_header(self.format_ctx.?, &opts);
     if (write_ret < 0) {
         av_dict_free(&opts);
-        c.blog(c.LOG_ERROR, "zobscast Muxer: avformat_write_header failed with code %d", write_ret);
+        std.log.err("zobscast Muxer: avformat_write_header failed with code {d}", .{write_ret});
         return error.WriteHeaderFailed;
     }
     av_dict_free(&opts);
 
     self.pkt = av_packet_alloc() orelse return error.OutOfMemory;
     self.header_done = true;
-    c.blog(c.LOG_INFO, "zobscast Muxer: initialized successfully (header size: %u bytes)", @as(c_uint, @intCast(self.header_data.items.len)));
+    std.log.info("zobscast Muxer: initialized successfully (header size: {d} bytes)", .{self.header_data.items.len});
     return self;
 }
 
@@ -167,36 +197,60 @@ pub fn writePacket(
     keyframe: bool,
     timebase_num: i32,
     timebase_den: i32,
+    is_audio: bool,
 ) !void {
     if (self.pkt) |pkt| {
         av_packet_unref(pkt);
         pkt.data = @constCast(data);
         pkt.size = @intCast(size);
-        pkt.stream_index = 0;
-        if (keyframe) {
-            pkt.flags |= 1; // AV_PKT_FLAG_KEY
+
+        if (is_audio) {
+            const st = self.audio_stream orelse return;
+            pkt.stream_index = st.index;
+            pkt.flags |= 1; // Audio frames are keyframes
+
+            if (!self.has_audio_offset) {
+                self.audio_pts_offset = dts;
+                self.has_audio_offset = true;
+            }
+
+            const in_tb: av.Rational = if (timebase_num > 0 and timebase_den > 0)
+                .{ .num = timebase_num, .den = timebase_den }
+            else
+                .{ .num = 1, .den = st.codecpar.sample_rate };
+            const out_tb = st.time_base;
+
+            pkt.pts = av_rescale_q(pts - self.audio_pts_offset, in_tb, out_tb);
+            pkt.dts = av_rescale_q(dts - self.audio_pts_offset, in_tb, out_tb);
+            pkt.duration = av_rescale_q(1024, in_tb, out_tb);
         } else {
-            pkt.flags &= ~@as(c_int, 1);
+            const st = self.video_stream orelse return;
+            pkt.stream_index = st.index;
+            if (keyframe) {
+                pkt.flags |= 1; // AV_PKT_FLAG_KEY
+            } else {
+                pkt.flags &= ~@as(c_int, 1);
+            }
+
+            if (!self.has_video_offset) {
+                self.video_pts_offset = dts;
+                self.has_video_offset = true;
+            }
+
+            const in_tb: av.Rational = if (timebase_num > 0 and timebase_den > 0)
+                .{ .num = timebase_num, .den = timebase_den }
+            else
+                .{ .num = 1, .den = 30 };
+            const out_tb = st.time_base;
+
+            pkt.pts = av_rescale_q(pts - self.video_pts_offset, in_tb, out_tb);
+            pkt.dts = av_rescale_q(dts - self.video_pts_offset, in_tb, out_tb);
+            pkt.duration = av_rescale_q(1, in_tb, out_tb);
         }
-
-        if (!self.has_pts_offset) {
-            self.pts_offset = dts;
-            self.has_pts_offset = true;
-        }
-
-        const in_tb: av.Rational = if (timebase_num > 0 and timebase_den > 0)
-            .{ .num = timebase_num, .den = timebase_den }
-        else
-            .{ .num = 1, .den = 30 };
-        const out_tb = self.stream.?.time_base;
-
-        pkt.pts = av_rescale_q(pts - self.pts_offset, in_tb, out_tb);
-        pkt.dts = av_rescale_q(dts - self.pts_offset, in_tb, out_tb);
-        pkt.duration = av_rescale_q(1, in_tb, out_tb);
 
         const ret = av_write_frame(self.format_ctx.?, pkt);
         if (ret < 0) {
-            c.blog(c.LOG_ERROR, "zobscast Muxer: av_write_frame error: %d", ret);
+            std.log.err("zobscast Muxer: av_write_frame error: {d} (is_audio={})", .{ ret, is_audio });
             return error.WriteFrameFailed;
         }
         if (self.avio_ctx) |pb| {
@@ -210,7 +264,7 @@ pub fn getHeader(self: *Muxer) []const u8 {
 }
 
 pub fn deinit(self: *Muxer) void {
-    c.blog(c.LOG_INFO, "zobscast Muxer: cleaning up...");
+    std.log.info("zobscast Muxer: cleaning up...", .{});
     if (self.format_ctx) |ctx| {
         if (self.header_done) {
             _ = av_write_trailer(ctx);

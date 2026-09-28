@@ -69,17 +69,28 @@ EXPORT obs_data_t *obs_output_get_settings(const obs_output_t *output);
 EXPORT uint32_t obs_output_get_width(const obs_output_t *output);
 EXPORT uint32_t obs_output_get_height(const obs_output_t *output);
 EXPORT obs_encoder_t *obs_output_get_video_encoder(const obs_output_t *output);
+EXPORT void obs_output_set_audio_encoder(obs_output_t *output,
+                                         obs_encoder_t *encoder, size_t idx);
+EXPORT obs_encoder_t *obs_output_get_audio_encoder(const obs_output_t *output,
+                                                   size_t idx);
 
 EXPORT video_t *obs_get_video(void);
+EXPORT audio_t *obs_get_audio(void);
 EXPORT obs_encoder_t *obs_video_encoder_create(const char *id, const char *name,
                                                obs_data_t *settings,
                                                obs_data_t *hotkey_data);
+EXPORT obs_encoder_t *obs_audio_encoder_create(const char *id, const char *name,
+                                               obs_data_t *settings,
+                                               size_t mixer_idx,
+                                               void *hotkey_data);
 EXPORT void obs_encoder_set_preferred_video_format(obs_encoder_t *encoder,
                                                    enum video_format format);
 EXPORT void obs_encoder_set_video(obs_encoder_t *encoder, video_t *video);
+EXPORT void obs_encoder_set_audio(obs_encoder_t *encoder, audio_t *audio);
 EXPORT void obs_encoder_release(obs_encoder_t *encoder);
 EXPORT bool obs_encoder_get_extra_data(const obs_encoder_t *encoder,
                                        uint8_t **extra_data, size_t *size);
+EXPORT uint32_t obs_encoder_get_sample_rate(const obs_encoder_t *encoder);
 
 EXPORT obs_source_t *obs_source_create_private(const char *id, const char *name,
                                                obs_data_t *settings);
@@ -180,15 +191,16 @@ EXPORT void obs_register_source_s(const struct obs_source_info *info,
 
 /* Cross-platform network & timing headers */
 #ifdef _WIN32
+#include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#include <windows.h>
 typedef int socklen_t;
 typedef intptr_t ssize_t;
 #ifndef MSG_NOSIGNAL
 #define MSG_NOSIGNAL 0
 #endif
-#define poll(fds, nfds, timeout) WSAPoll((LPWSAPOLLFD)(fds), (ULONG)(nfds), (INT)(timeout))
+#define poll(fds, nfds, timeout)                                               \
+  WSAPoll((LPWSAPOLLFD)(fds), (ULONG)(nfds), (INT)(timeout))
 static inline int posix_close(intptr_t fd) { return closesocket((SOCKET)fd); }
 #define close(fd) posix_close((intptr_t)(fd))
 #define INVALID_SOCKET_VALUE INVALID_SOCKET
