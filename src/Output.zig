@@ -195,7 +195,7 @@ fn name(ctx: ?*anyopaque) callconv(.c) [*c]const u8 {
 }
 
 fn create(settings: ?*c.struct_obs_data, ptr: ?*c.struct_obs_output) callconv(.c) ?*anyopaque {
-    c.blog(c.LOG_INFO, "zobscast create");
+    c.blog(c.LOG_INFO, "zobscast output create");
     const self = std.heap.c_allocator.create(Output) catch @panic("zobscast create alloc error");
 
     self.* = .{
@@ -217,7 +217,6 @@ fn create(settings: ?*c.struct_obs_data, ptr: ?*c.struct_obs_output) callconv(.c
         }
     }
 
-    std.log.debug("Output; {@}", .{&self});
     return self;
 }
 
@@ -333,37 +332,36 @@ pub fn get_properties(ctx: ?*anyopaque) callconv(.c) ?*c.obs_properties_t {
         "Enable Verbose Debug Logging",
     );
 
-    if (ctx) |selfptr| {
-        const self: *Output = @ptrCast(@alignCast(selfptr));
-        // Initial mDNS discovery if needed
-        self.ensureDiscovery();
-        if (self.discovery) |*disc| {
-            disc.scan(800) catch {};
+    const self: *Output = @ptrCast(@alignCast(ctx));
 
-            var dev_list: std.ArrayList(Device) = .empty;
-            defer {
-                for (dev_list.items) |d| d.deinit(std.heap.c_allocator);
-                dev_list.deinit(std.heap.c_allocator);
-            }
-            disc.getDevices(std.heap.c_allocator, &dev_list) catch {};
+    // Initial mDNS discovery if needed
+    self.ensureDiscovery();
+    if (self.discovery) |*disc| {
+        disc.scan(800) catch {};
 
-            for (dev_list.items) |d| {
-                var label_buf: [256]u8 = undefined;
-                const label = std.mem.printSentinel(
-                    &label_buf,
-                    "{s} ({s})",
-                    .{ d.name, d.ip },
-                    0,
-                ) catch d.name;
-                var ip_z: [64:0]u8 = undefined;
-                const ip_slice = std.mem.printSentinel(
-                    &ip_z,
-                    "{s}",
-                    .{d.ip},
-                    0,
-                ) catch d.ip;
-                _ = c.obs_property_list_add_string(list, label.ptr, ip_slice.ptr);
-            }
+        var dev_list: std.ArrayList(Device) = .empty;
+        defer {
+            for (dev_list.items) |d| d.deinit(std.heap.c_allocator);
+            dev_list.deinit(std.heap.c_allocator);
+        }
+        disc.getDevices(std.heap.c_allocator, &dev_list) catch {};
+
+        for (dev_list.items) |d| {
+            var label_buf: [256]u8 = undefined;
+            const label = std.mem.printSentinel(
+                &label_buf,
+                "{s} ({s}:{d})",
+                .{ d.name, d.ip, d.port },
+                0,
+            ) catch d.name;
+            var ip_z: [64:0]u8 = undefined;
+            const ip_slice = std.mem.printSentinel(
+                &ip_z,
+                "{s}:{d}",
+                .{ d.ip, d.port },
+                0,
+            ) catch d.ip;
+            _ = c.obs_property_list_add_string(list, label.ptr, ip_slice.ptr);
         }
     }
 
