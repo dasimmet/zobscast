@@ -4,25 +4,25 @@ const root = @import("root.zig");
 const gui = @import("gui.zig");
 const Muxer = @import("Muxer.zig");
 const Server = @import("Server.zig");
-const Discovery = @import("Discovery.zig").Discovery;
-const Device = @import("Discovery.zig").Device;
-const CastClient = @import("Client.zig").Client;
+const Discovery = @import("Discovery.zig");
+const Device = Discovery.Device;
+const Client = @import("Client.zig");
 const Output = @This();
 
 ptr: *c.obs_output_t,
 settings: ?*c.obs_data_t = null,
 active: bool = false,
 sink_ip: []u8 = &[_]u8{},
+discovery: ?Discovery = null,
 server: ?*Server = null,
 muxer: ?*Muxer = null,
-cast_client: ?*CastClient = null,
+cast_client: ?*Client = null,
 connect_thread: ?std.Thread = null,
 mutex: std.atomic.Mutex = .unlocked,
 discovery_mutex: std.atomic.Mutex = .unlocked,
 debug_logging: bool = false,
 packet_count: usize = 0,
 allocator: std.mem.Allocator,
-discovery: ?Discovery = null,
 
 pub const info: c.obs_output_info = .{
     .id = "zobscast",
@@ -621,7 +621,7 @@ fn connectThread(self: *Output) void {
     }
 
     // 6. Connect CastClient and request playback
-    const cast_client = CastClient.init(self.allocator, target_ip, 8009) catch |err| {
+    const cast_client = Client.init(self.allocator, target_ip, 8009) catch |err| {
         c.blog(c.LOG_ERROR, "zobscast: failed to init Cast client: %s", @errorName(err).ptr);
         c.obs_output_end_data_capture(self.ptr);
         muxer.deinit();

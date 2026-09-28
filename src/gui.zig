@@ -181,6 +181,7 @@ fn loadQt() void {
     }
 
     if (h_widgets) |hw| {
+        c.blog(c.LOG_INFO, "zobscast GUI: Qt6Widgets loaded");
         if (loadSymbol(hw, "_ZNK11QMainWindow7menuBarEv")) |sym| {
             fn_menu_bar = @ptrCast(@alignCast(sym));
         }
@@ -221,6 +222,7 @@ fn loadQt() void {
     }
 
     if (h_web) |hweb| {
+        c.blog(c.LOG_INFO, "zobscast GUI: Qt6WebEngineWidgets loaded");
         if (loadSymbol(hweb, "_ZN14QWebEngineViewC1EP7QWidget")) |sym| {
             fn_web_ctor = @ptrCast(@alignCast(sym));
         }
