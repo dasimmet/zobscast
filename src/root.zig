@@ -82,10 +82,22 @@ export fn obs_module_free_locale() callconv(.c) void {
     obs_module_lookup = null;
 }
 
-fn obs_module_text(val: [*c]const u8) callconv(.c) [*c]const u8 {
+pub fn obs_module_text(val: [*c]const u8) callconv(.c) [*c]const u8 {
     var out: [*c]const u8 = val;
     _ = c.text_lookup_getstr(obs_module_lookup, val, &out);
     return out;
+}
+
+pub fn getLocaleString(key: [:0]const u8, default_val: []const u8) []const u8 {
+    if (obs_module_lookup) |lookup| {
+        var out: [*c]const u8 = undefined;
+        if (c.text_lookup_getstr(lookup, key.ptr, &out)) {
+            if (out != null) {
+                return std.mem.span(out);
+            }
+        }
+    }
+    return default_val;
 }
 
 // Generates an enum from all decls prefixed with 'decl_prefix'

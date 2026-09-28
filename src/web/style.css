@@ -173,6 +173,13 @@ select:focus {
   transform: scale(0.98);
 }
 
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+  transform: none;
+}
+
 .btn-primary {
   background: var(--btn-primary);
   color: #fff;

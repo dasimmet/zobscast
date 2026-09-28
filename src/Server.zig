@@ -2,6 +2,7 @@ const std = @import("std");
 const c = @import("c");
 const Output = @import("Output.zig");
 const Device = @import("Discovery.zig").Device;
+const root = @import("root.zig");
 
 const settings_html = @embedFile("web/index.html");
 const settings_css = @embedFile("web/style.css");
@@ -239,6 +240,12 @@ fn handleClient(self: *Server, client_fd: c.SOCKET) void {
         return;
     }
 
+    // API: Get locale strings
+    if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/locale")) {
+        self.handleGetLocale(client_fd);
+        return;
+    }
+
     // API: Get discovered devices
     if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/devices")) {
         self.handleGetDevices(client_fd);
@@ -325,6 +332,80 @@ fn handleGetSettings(self: *Server, client_fd: c.SOCKET) void {
         .active = is_active,
     }, .{}) catch {
         self.sendJsonResponse(client_fd, "{\"error\":\"json_error\"}");
+        return;
+    };
+    defer self.allocator.free(json);
+    self.sendJsonResponse(client_fd, json);
+}
+
+fn handleGetLocale(self: *Server, client_fd: c.SOCKET) void {
+    const json = std.json.Stringify.valueAlloc(self.allocator, .{
+        .@"Zobscast.Title" = root.getLocaleString("Zobscast.Title", "Zobscast Settings"),
+        .Title = root.getLocaleString("Zobscast.Title", "Zobscast Settings"),
+        .@"Zobscast.Status.Inactive" = root.getLocaleString("Zobscast.Status.Inactive", "Inactive"),
+        .@"Status.Inactive" = root.getLocaleString("Zobscast.Status.Inactive", "Inactive"),
+        .@"Zobscast.Status.Active" = root.getLocaleString("Zobscast.Status.Active", "Casting Live"),
+        .@"Status.Active" = root.getLocaleString("Zobscast.Status.Active", "Casting Live"),
+        .@"Zobscast.Destination.Title" = root.getLocaleString("Zobscast.Destination.Title", "Cast Destination"),
+        .@"Destination.Title" = root.getLocaleString("Zobscast.Destination.Title", "Cast Destination"),
+        .@"Zobscast.Destination.FoundDevice" = root.getLocaleString("Zobscast.Destination.FoundDevice", "Found Device"),
+        .@"Destination.FoundDevice" = root.getLocaleString("Zobscast.Destination.FoundDevice", "Found Device"),
+        .@"Zobscast.Destination.Choose" = root.getLocaleString("Zobscast.Destination.Choose", "-- Choose Discovered Device --"),
+        .@"Destination.Choose" = root.getLocaleString("Zobscast.Destination.Choose", "-- Choose Discovered Device --"),
+        .@"Zobscast.Destination.Scanning" = root.getLocaleString("Zobscast.Destination.Scanning", "Scanning devices..."),
+        .@"Destination.Scanning" = root.getLocaleString("Zobscast.Destination.Scanning", "Scanning devices..."),
+        .@"Zobscast.Destination.Scan" = root.getLocaleString("Zobscast.Destination.Scan", "Scan"),
+        .@"Destination.Scan" = root.getLocaleString("Zobscast.Destination.Scan", "Scan"),
+        .@"Zobscast.Destination.ScanInProgress" = root.getLocaleString("Zobscast.Destination.ScanInProgress", "Scanning..."),
+        .@"Destination.ScanInProgress" = root.getLocaleString("Zobscast.Destination.ScanInProgress", "Scanning..."),
+        .@"Zobscast.Destination.IpAddress" = root.getLocaleString("Zobscast.Destination.IpAddress", "IP Address"),
+        .@"Destination.IpAddress" = root.getLocaleString("Zobscast.Destination.IpAddress", "IP Address"),
+        .@"Zobscast.Destination.IpPlaceholder" = root.getLocaleString("Zobscast.Destination.IpPlaceholder", "e.g. 192.168.1.100 or device name"),
+        .@"Destination.IpPlaceholder" = root.getLocaleString("Zobscast.Destination.IpPlaceholder", "e.g. 192.168.1.100 or device name"),
+        .@"Zobscast.Encoding.Title" = root.getLocaleString("Zobscast.Encoding.Title", "Video & Encoding"),
+        .@"Encoding.Title" = root.getLocaleString("Zobscast.Encoding.Title", "Video & Encoding"),
+        .@"Zobscast.Encoding.Bitrate" = root.getLocaleString("Zobscast.Encoding.Bitrate", "Bitrate"),
+        .@"Encoding.Bitrate" = root.getLocaleString("Zobscast.Encoding.Bitrate", "Bitrate"),
+        .@"Zobscast.Encoding.BitrateSuffix" = root.getLocaleString("Zobscast.Encoding.BitrateSuffix", "kbps"),
+        .@"Encoding.BitrateSuffix" = root.getLocaleString("Zobscast.Encoding.BitrateSuffix", "kbps"),
+        .@"Zobscast.Encoding.Preset" = root.getLocaleString("Zobscast.Encoding.Preset", "Preset"),
+        .@"Encoding.Preset" = root.getLocaleString("Zobscast.Encoding.Preset", "Preset"),
+        .@"Zobscast.Encoding.Preset.Ultrafast" = root.getLocaleString("Zobscast.Encoding.Preset.Ultrafast", "ultrafast (lowest delay)"),
+        .@"Encoding.Preset.Ultrafast" = root.getLocaleString("Zobscast.Encoding.Preset.Ultrafast", "ultrafast (lowest delay)"),
+        .@"Zobscast.Encoding.Preset.Superfast" = root.getLocaleString("Zobscast.Encoding.Preset.Superfast", "superfast"),
+        .@"Encoding.Preset.Superfast" = root.getLocaleString("Zobscast.Encoding.Preset.Superfast", "superfast"),
+        .@"Zobscast.Encoding.Preset.Veryfast" = root.getLocaleString("Zobscast.Encoding.Preset.Veryfast", "veryfast (recommended)"),
+        .@"Encoding.Preset.Veryfast" = root.getLocaleString("Zobscast.Encoding.Preset.Veryfast", "veryfast (recommended)"),
+        .@"Zobscast.Encoding.Preset.Faster" = root.getLocaleString("Zobscast.Encoding.Preset.Faster", "faster"),
+        .@"Encoding.Preset.Faster" = root.getLocaleString("Zobscast.Encoding.Preset.Faster", "faster"),
+        .@"Zobscast.Encoding.Preset.Fast" = root.getLocaleString("Zobscast.Encoding.Preset.Fast", "fast"),
+        .@"Encoding.Preset.Fast" = root.getLocaleString("Zobscast.Encoding.Preset.Fast", "fast"),
+        .@"Zobscast.Encoding.Preset.Medium" = root.getLocaleString("Zobscast.Encoding.Preset.Medium", "medium"),
+        .@"Encoding.Preset.Medium" = root.getLocaleString("Zobscast.Encoding.Preset.Medium", "medium"),
+        .@"Zobscast.Diagnostics.Title" = root.getLocaleString("Zobscast.Diagnostics.Title", "Diagnostics"),
+        .@"Diagnostics.Title" = root.getLocaleString("Zobscast.Diagnostics.Title", "Diagnostics"),
+        .@"Zobscast.Diagnostics.VerboseLogging" = root.getLocaleString("Zobscast.Diagnostics.VerboseLogging", "Verbose Logging"),
+        .@"Diagnostics.VerboseLogging" = root.getLocaleString("Zobscast.Diagnostics.VerboseLogging", "Verbose Logging"),
+        .@"Zobscast.Diagnostics.VerboseLoggingDesc" = root.getLocaleString("Zobscast.Diagnostics.VerboseLoggingDesc", "Log video packet stats to OBS log"),
+        .@"Diagnostics.VerboseLoggingDesc" = root.getLocaleString("Zobscast.Diagnostics.VerboseLoggingDesc", "Log video packet stats to OBS log"),
+        .@"Zobscast.Actions.Start" = root.getLocaleString("Zobscast.Actions.Start", "Start Casting"),
+        .@"Actions.Start" = root.getLocaleString("Zobscast.Actions.Start", "Start Casting"),
+        .@"Zobscast.Actions.Stop" = root.getLocaleString("Zobscast.Actions.Stop", "Stop Casting"),
+        .@"Actions.Stop" = root.getLocaleString("Zobscast.Actions.Stop", "Stop Casting"),
+        .@"Zobscast.Actions.Save" = root.getLocaleString("Zobscast.Actions.Save", "Save Settings"),
+        .@"Actions.Save" = root.getLocaleString("Zobscast.Actions.Save", "Save Settings"),
+        .@"Zobscast.Toast.Saved" = root.getLocaleString("Zobscast.Toast.Saved", "Settings saved!"),
+        .@"Toast.Saved" = root.getLocaleString("Zobscast.Toast.Saved", "Settings saved!"),
+        .@"Zobscast.Toast.SaveFailed" = root.getLocaleString("Zobscast.Toast.SaveFailed", "Failed to save settings"),
+        .@"Toast.SaveFailed" = root.getLocaleString("Zobscast.Toast.SaveFailed", "Failed to save settings"),
+        .@"Zobscast.Toast.ScanComplete" = root.getLocaleString("Zobscast.Toast.ScanComplete", "Scan complete"),
+        .@"Toast.ScanComplete" = root.getLocaleString("Zobscast.Toast.ScanComplete", "Scan complete"),
+        .@"Zobscast.Toast.ScanFailed" = root.getLocaleString("Zobscast.Toast.ScanFailed", "Scan failed"),
+        .@"Toast.ScanFailed" = root.getLocaleString("Zobscast.Toast.ScanFailed", "Scan failed"),
+        .@"Zobscast.Toast.NetworkError" = root.getLocaleString("Zobscast.Toast.NetworkError", "Network error"),
+        .@"Toast.NetworkError" = root.getLocaleString("Zobscast.Toast.NetworkError", "Network error"),
+    }, .{}) catch {
+        self.sendJsonResponse(client_fd, "{}");
         return;
     };
     defer self.allocator.free(json);
