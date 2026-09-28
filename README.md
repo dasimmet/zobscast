@@ -56,19 +56,18 @@ cp -r bin data ~/Library/Application\ Support/obs-studio/plugins/zobscast/
 
 ## Network Requirements
 
-| Port | Protocol | Direction | Purpose |
-|------|----------|-----------|---------|
-| 5353 | UDP multicast | out | mDNS device discovery |
-| 8009 | TCP (TLS) | out | CastV2 control channel |
-| auto | TCP (HTTP) | in | Media stream (Chromecast pulls from your machine) |
+| Port | Protocol      | Direction | Purpose                                           |
+| ---- | ------------- | --------- | ------------------------------------------------- |
+| 5353 | UDP multicast | out       | mDNS device discovery                             |
+| 8009 | TCP (TLS)     | out       | CastV2 control channel                            |
+| auto | TCP (HTTP)    | in        | Media stream (Chromecast pulls from your machine) |
 
 ---
 
 ## Building from Source
 
 ### Requirements
-- [anyzig](https://github.com/dasimmet/anyzig) or Zig **0.17.0-dev** at `~/.local/bin/zig`.
-- Standard C library.
+- Zig **0.17.0-dev**
 
 ```bash
 # Debug build
@@ -85,13 +84,13 @@ cp -r bin data ~/Library/Application\ Support/obs-studio/plugins/zobscast/
 ```
 
 Outputs are placed in `zig-out/bin/`:
-| Platform | Path |
-|----------|------|
-| Linux x86_64 | `zig-out/bin/64bit/zobscast.so` |
-| Linux aarch64 | `zig-out/bin/64bit/zobscast.so` |
-| Windows x86_64 | `zig-out/bin/64bit/zobscast.dll` |
-| macOS x86_64 | `zig-out/bin/64bit/zobscast.dylib` |
-| macOS aarch64 | `zig-out/bin/64bit/zobscast.dylib` |
+| Platform       | Path                               |
+| -------------- | ---------------------------------- |
+| Linux x86_64   | `zig-out/bin/64bit/zobscast.so`    |
+| Linux aarch64  | `zig-out/bin/64bit/zobscast.so`    |
+| Windows x86_64 | `zig-out/bin/64bit/zobscast.dll`   |
+| macOS x86_64   | `zig-out/bin/64bit/zobscast.dylib` |
+| macOS aarch64  | `zig-out/bin/64bit/zobscast.dylib` |
 
 ---
 
@@ -108,16 +107,16 @@ OBS Studio
 ```
 
 **Source files:**
-| File | Purpose |
-|------|---------|
-| [`src/root.zig`](src/root.zig) | OBS module entry point, Tools menu, locale |
-| [`src/Output.zig`](src/Output.zig) | OBS output plugin, encoder setup, stream lifecycle |
-| [`src/Muxer.zig`](src/Muxer.zig) | In-memory fragmented MP4 muxer (FFmpeg) |
-| [`src/Server.zig`](src/Server.zig) | Non-blocking HTTP streaming server |
-| [`src/Discovery.zig`](src/Discovery.zig) | Zero-dependency mDNS Chromecast discovery |
-| [`src/Client.zig`](src/Client.zig) | CastV2 TLS protocol client |
-| [`src/gui.zig`](src/gui.zig) | Qt WebView settings window |
-| [`src/obs_api.h`](src/obs_api.h) | Minimal OBS C API declarations |
+| File                                     | Purpose                                            |
+| ---------------------------------------- | -------------------------------------------------- |
+| [`src/root.zig`](src/root.zig)           | OBS module entry point, Tools menu, locale         |
+| [`src/Output.zig`](src/Output.zig)       | OBS output plugin, encoder setup, stream lifecycle |
+| [`src/Muxer.zig`](src/Muxer.zig)         | In-memory fragmented MP4 muxer (FFmpeg)            |
+| [`src/Server.zig`](src/Server.zig)       | Non-blocking HTTP streaming server                 |
+| [`src/Discovery.zig`](src/Discovery.zig) | Zero-dependency mDNS Chromecast discovery          |
+| [`src/Client.zig`](src/Client.zig)       | CastV2 TLS protocol client                         |
+| [`src/gui.zig`](src/gui.zig)             | Qt WebView settings window                         |
+| [`src/obs_api.h`](src/obs_api.h)         | Minimal OBS C API declarations                     |
 
 ---
 
