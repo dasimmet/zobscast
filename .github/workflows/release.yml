@@ -24,37 +24,26 @@ jobs:
           # Linux x86_64
           - target: x86_64-linux-gnu
             runner: ubuntu-latest
-            artifact_suffix: linux-x86_64
-            lib_name: zobscast.so
-            install_dir: bin/64bit
 
           # Linux aarch64
           - target: aarch64-linux-gnu
             runner: ubuntu-latest
-            artifact_suffix: linux-aarch64
-            lib_name: zobscast.so
-            install_dir: bin/64bit
 
           # Windows x86_64
           - target: x86_64-windows-gnu
             runner: ubuntu-latest
-            artifact_suffix: windows-x86_64
-            lib_name: zobscast.dll
-            install_dir: bin/64bit
+
+          # Windows aarch64
+          - target: aarch64-windows-gnu
+            runner: ubuntu-latest
 
           # macOS x86_64
           - target: x86_64-macos
             runner: macos-13
-            artifact_suffix: macos-x86_64
-            lib_name: zobscast.dylib
-            install_dir: bin
 
           # macOS aarch64 (Apple Silicon)
           - target: aarch64-macos
             runner: macos-14
-            artifact_suffix: macos-aarch64
-            lib_name: zobscast.dylib
-            install_dir: bin
 
     steps:
       - name: Checkout
@@ -67,40 +56,23 @@ jobs:
         run: |
           zig build \
             -Dtarget=${{ matrix.target }} \
-            -Doptimize=ReleaseFast \
-            --prefix zig-out
+            -Doptimize=ReleaseFast
 
       - name: Package artifact
         shell: bash
         run: |
-          ARTIFACT_DIR="package-${{ matrix.artifact_suffix }}"
-          mkdir -p "${ARTIFACT_DIR}/bin/64bit"
-          mkdir -p "${ARTIFACT_DIR}/data"
-
-          # Copy library
-          LIB_PATH=$(find zig-out -name "${{ matrix.lib_name }}" | head -1)
-          if [ -z "$LIB_PATH" ]; then
-            echo "ERROR: Could not find ${{ matrix.lib_name }} in zig-out"
-            find zig-out -type f
-            exit 1
-          fi
-          cp "$LIB_PATH" "${ARTIFACT_DIR}/${{ matrix.install_dir }}/${{ matrix.lib_name }}"
-
-          # Copy locale data
-          cp -r data "${ARTIFACT_DIR}/"
-
           # Create tarball
-          tar -czf "zobscast-${{ matrix.artifact_suffix }}.tar.gz" \
-            -C "${ARTIFACT_DIR}" .
+          tar -czf "zobscast-${{ matrix.target }}.tar.gz" \
+            -C "zig-out" .
 
           echo "Contents of artifact:"
-          tar -tzf "zobscast-${{ matrix.artifact_suffix }}.tar.gz"
+          tar -tzf "zobscast-${{ matrix.target }}.tar.gz"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: zobscast-${{ matrix.artifact_suffix }}
-          path: zobscast-${{ matrix.artifact_suffix }}.tar.gz
+          name: zobscast-${{ matrix.target }}
+          path: zobscast-${{ matrix.target }}.tar.gz
           if-no-files-found: error
 
   release:

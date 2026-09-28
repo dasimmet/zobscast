@@ -71,16 +71,16 @@ cp -r bin data ~/Library/Application\ Support/obs-studio/plugins/zobscast/
 
 ```bash
 # Debug build
-~/.local/bin/zig build
+zig build
 
 # Optimized release build
-~/.local/bin/zig build -Doptimize=ReleaseFast
+zig build -Doptimize=ReleaseFast
 
 # Cross-compile for Windows
-~/.local/bin/zig build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseFast
+zig build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseFast
 
 # Cross-compile for macOS arm64
-~/.local/bin/zig build -Dtarget=aarch64-macos -Doptimize=ReleaseFast
+zig build -Dtarget=aarch64-macos -Doptimize=ReleaseFast
 ```
 
 Outputs are placed in `zig-out/bin/`:
@@ -122,4 +122,4 @@ OBS Studio
 
 ## License
 
-[MIT](LICENSE) — Copyright (c) 2024 Tobias Simmet
+[MIT](LICENSE) — Copyright (c) 2026 Tobias Simmetsreiter
