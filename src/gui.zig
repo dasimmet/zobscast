@@ -61,6 +61,8 @@ const QUrlDtorFn = *const fn (*QUrl) callconv(.c) void;
 const QDesktopOpenUrlFn = *const fn (?*const anyopaque) callconv(.c) bool;
 const OperatorNewFn = *const fn (usize) callconv(.c) ?*anyopaque;
 
+const DynamicLibrary = if (builtin.os.tag == .windows) ?*anyopaque else ?std.DynLib;
+
 var fn_set_checkable: ?BoolFn = null;
 var fn_set_checked: ?BoolFn = null;
 var fn_menu_bar: ?MenuBarFn = null;
@@ -88,31 +90,31 @@ var fn_operator_new: ?OperatorNewFn = null;
 
 var cached_action: ?*anyopaque = null;
 var qt_loaded: bool = false;
+var h_core: DynamicLibrary = null;
+var h_gui: DynamicLibrary = null;
+var h_widgets: DynamicLibrary = null;
+var h_web: DynamicLibrary = null;
+var h_cpp: DynamicLibrary = null;
 
-const RTLD_LAZY: c_int = 1;
-const RTLD_NOLOAD: c_int = 4;
-extern fn dlopen(path: [*c]const u8, flags: c_int) ?*anyopaque;
-extern fn dlsym(handle: ?*anyopaque, sym: [*c]const u8) ?*anyopaque;
-
-fn loadLibrary(name: [*c]const u8) ?*anyopaque {
+fn loadLibrary(name: [:0]const u8) DynamicLibrary {
     if (comptime builtin.os.tag == .windows) {
         if (c.GetModuleHandleA(name)) |h| return @ptrCast(h);
         if (c.LoadLibraryA(name)) |h| return @ptrCast(h);
         return null;
     } else {
-        var h = dlopen(name, RTLD_LAZY | RTLD_NOLOAD);
-        if (h == null) h = dlopen(name, RTLD_LAZY);
-        return h;
+        return std.DynLib.open(name) catch null;
     }
 }
 
-fn loadSymbol(handle: ?*anyopaque, sym: [*c]const u8) ?*anyopaque {
-    if (handle == null) return null;
+fn loadSymbol(handle: *DynamicLibrary, sym: [:0]const u8) ?*anyopaque {
     if (comptime builtin.os.tag == .windows) {
-        if (c.GetProcAddress(@ptrCast(@alignCast(handle)), sym)) |p| return @ptrCast(@constCast(p));
+        if (handle.*) |h| {
+            if (c.GetProcAddress(@ptrCast(@alignCast(h)), sym)) |p| return @ptrCast(@constCast(p));
+        }
         return null;
     } else {
-        return dlsym(handle, sym);
+        if (handle.*) |*library| return library.lookup(*anyopaque, sym);
+        return null;
     }
 }
 
@@ -120,121 +122,121 @@ fn loadQt() void {
     if (qt_loaded) return;
     qt_loaded = true;
 
-    const core_lib: [*c]const u8 = switch (builtin.os.tag) {
+    const core_lib: [:0]const u8 = switch (builtin.os.tag) {
         .windows => "Qt6Core.dll",
         .macos => "libQt6Core.dylib",
         else => "libQt6Core.so.6",
     };
-    const gui_lib: [*c]const u8 = switch (builtin.os.tag) {
+    const gui_lib: [:0]const u8 = switch (builtin.os.tag) {
         .windows => "Qt6Gui.dll",
         .macos => "libQt6Gui.dylib",
         else => "libQt6Gui.so.6",
     };
-    const widgets_lib: [*c]const u8 = switch (builtin.os.tag) {
+    const widgets_lib: [:0]const u8 = switch (builtin.os.tag) {
         .windows => "Qt6Widgets.dll",
         .macos => "libQt6Widgets.dylib",
         else => "libQt6Widgets.so.6",
     };
-    const web_lib: [*c]const u8 = switch (builtin.os.tag) {
+    const web_lib: [:0]const u8 = switch (builtin.os.tag) {
         .windows => "Qt6WebEngineWidgets.dll",
         .macos => "libQt6WebEngineWidgets.dylib",
         else => "libQt6WebEngineWidgets.so.6",
     };
-    const cpp_lib: ?[*c]const u8 = switch (builtin.os.tag) {
+    const cpp_lib: ?[:0]const u8 = switch (builtin.os.tag) {
         .windows => "msvcrt.dll",
         .macos => "libc++.dylib",
         .linux => "libstdc++.so.6",
         else => null,
     };
 
-    const h_core = loadLibrary(core_lib);
-    const h_gui = loadLibrary(gui_lib);
-    const h_widgets = loadLibrary(widgets_lib);
-    const h_web = loadLibrary(web_lib);
-    const h_cpp = if (cpp_lib) |cl| loadLibrary(cl) else null;
+    h_core = loadLibrary(core_lib);
+    h_gui = loadLibrary(gui_lib);
+    h_widgets = loadLibrary(widgets_lib);
+    h_web = loadLibrary(web_lib);
+    h_cpp = if (cpp_lib) |cl| loadLibrary(cl) else null;
 
-    if (h_core) |hc| {
-        if (loadSymbol(hc, "_ZN7QString8fromUtf8E14QByteArrayView")) |sym| {
+    if (h_core != null) {
+        if (loadSymbol(&h_core, "_ZN7QString8fromUtf8E14QByteArrayView")) |sym| {
             fn_qstring_from_utf8 = @ptrCast(@alignCast(sym));
         }
-        if (loadSymbol(hc, "_ZN4QUrl11fromEncodedE14QByteArrayViewNS_11ParsingModeE")) |sym| {
+        if (loadSymbol(&h_core, "_ZN4QUrl11fromEncodedE14QByteArrayViewNS_11ParsingModeE")) |sym| {
             fn_qurl_from_encoded = @ptrCast(@alignCast(sym));
         }
-        if (loadSymbol(hc, "_ZN4QUrlD1Ev")) |sym| {
+        if (loadSymbol(&h_core, "_ZN4QUrlD1Ev")) |sym| {
             fn_qurl_dtor = @ptrCast(@alignCast(sym));
         }
     }
 
-    if (h_gui) |hg| {
-        if (loadSymbol(hg, "_ZN7QAction12setCheckableEb")) |sym| {
+    if (h_gui != null) {
+        if (loadSymbol(&h_gui, "_ZN7QAction12setCheckableEb")) |sym| {
             fn_set_checkable = @ptrCast(@alignCast(sym));
         }
-        if (loadSymbol(hg, "_ZN7QAction10setCheckedEb")) |sym| {
+        if (loadSymbol(&h_gui, "_ZN7QAction10setCheckedEb")) |sym| {
             fn_set_checked = @ptrCast(@alignCast(sym));
         }
-        if (loadSymbol(hg, "_ZNK7QAction10menuObjectEv")) |sym| {
+        if (loadSymbol(&h_gui, "_ZNK7QAction10menuObjectEv")) |sym| {
             fn_menu_object = @ptrCast(@alignCast(sym));
         }
-        if (loadSymbol(hg, "_ZN16QDesktopServices7openUrlERK4QUrl")) |sym| {
+        if (loadSymbol(&h_gui, "_ZN16QDesktopServices7openUrlERK4QUrl")) |sym| {
             fn_desktop_open_url = @ptrCast(@alignCast(sym));
         }
     }
 
-    if (h_widgets) |hw| {
+    if (h_widgets != null) {
         std.log.info("zobscast GUI: Qt6Widgets loaded", .{});
-        if (loadSymbol(hw, "_ZNK11QMainWindow7menuBarEv")) |sym| {
+        if (loadSymbol(&h_widgets, "_ZNK11QMainWindow7menuBarEv")) |sym| {
             fn_menu_bar = @ptrCast(@alignCast(sym));
         }
-        if (loadSymbol(hw, "_ZNK7QWidget7actionsEv")) |sym| {
+        if (loadSymbol(&h_widgets, "_ZNK7QWidget7actionsEv")) |sym| {
             fn_actions = @ptrCast(@alignCast(sym));
         }
-        if (loadSymbol(hw, "_ZNK11QMainWindow9statusBarEv")) |sym| {
+        if (loadSymbol(&h_widgets, "_ZNK11QMainWindow9statusBarEv")) |sym| {
             fn_status_bar = @ptrCast(@alignCast(sym));
         }
-        if (loadSymbol(hw, "_ZN10QStatusBar11showMessageERK7QStringi")) |sym| {
+        if (loadSymbol(&h_widgets, "_ZN10QStatusBar11showMessageERK7QStringi")) |sym| {
             fn_status_show = @ptrCast(@alignCast(sym));
         }
-        if (loadSymbol(hw, "_ZN7QWidget6resizeERK5QSize")) |sym| {
+        if (loadSymbol(&h_widgets, "_ZN7QWidget6resizeERK5QSize")) |sym| {
             fn_widget_resize_size = @ptrCast(@alignCast(sym));
-        } else if (loadSymbol(hw, "?resize@QWidget@@QEAAXAEBVQSize@@@Z")) |sym| {
+        } else if (loadSymbol(&h_widgets, "?resize@QWidget@@QEAAXAEBVQSize@@@Z")) |sym| {
             fn_widget_resize_size = @ptrCast(@alignCast(sym));
         }
-        if (loadSymbol(hw, "_ZN7QWidget6resizeEii")) |sym| {
+        if (loadSymbol(&h_widgets, "_ZN7QWidget6resizeEii")) |sym| {
             fn_widget_resize = @ptrCast(@alignCast(sym));
-        } else if (loadSymbol(hw, "?resize@QWidget@@QEAAXHH@Z")) |sym| {
+        } else if (loadSymbol(&h_widgets, "?resize@QWidget@@QEAAXHH@Z")) |sym| {
             fn_widget_resize = @ptrCast(@alignCast(sym));
         }
-        if (loadSymbol(hw, "_ZN7QWidget14setWindowTitleERK7QString")) |sym| {
+        if (loadSymbol(&h_widgets, "_ZN7QWidget14setWindowTitleERK7QString")) |sym| {
             fn_widget_set_title = @ptrCast(@alignCast(sym));
         }
-        if (loadSymbol(hw, "_ZN7QWidget12setAttributeEN2Qt15WidgetAttributeEb")) |sym| {
+        if (loadSymbol(&h_widgets, "_ZN7QWidget12setAttributeEN2Qt15WidgetAttributeEb")) |sym| {
             fn_widget_set_attr = @ptrCast(@alignCast(sym));
         }
-        if (loadSymbol(hw, "_ZN7QWidget4showEv")) |sym| {
+        if (loadSymbol(&h_widgets, "_ZN7QWidget4showEv")) |sym| {
             fn_widget_show = @ptrCast(@alignCast(sym));
         }
-        if (loadSymbol(hw, "_ZN7QWidget5raiseEv")) |sym| {
+        if (loadSymbol(&h_widgets, "_ZN7QWidget5raiseEv")) |sym| {
             fn_widget_raise = @ptrCast(@alignCast(sym));
         }
-        if (loadSymbol(hw, "_ZN7QWidget14activateWindowEv")) |sym| {
+        if (loadSymbol(&h_widgets, "_ZN7QWidget14activateWindowEv")) |sym| {
             fn_widget_activate = @ptrCast(@alignCast(sym));
         }
     }
 
-    if (h_web) |hweb| {
+    if (h_web != null) {
         std.log.info("zobscast GUI: Qt6WebEngineWidgets loaded", .{});
-        if (loadSymbol(hweb, "_ZN14QWebEngineViewC1EP7QWidget")) |sym| {
+        if (loadSymbol(&h_web, "_ZN14QWebEngineViewC1EP7QWidget")) |sym| {
             fn_web_ctor = @ptrCast(@alignCast(sym));
         }
-        if (loadSymbol(hweb, "_ZN14QWebEngineView4loadERK4QUrl")) |sym| {
+        if (loadSymbol(&h_web, "_ZN14QWebEngineView4loadERK4QUrl")) |sym| {
             fn_web_load = @ptrCast(@alignCast(sym));
         }
     }
 
-    if (h_cpp) |hcpp| {
-        if (loadSymbol(hcpp, "_Znwm")) |sym| {
+    if (h_cpp != null) {
+        if (loadSymbol(&h_cpp, "_Znwm")) |sym| {
             fn_operator_new = @ptrCast(@alignCast(sym));
-        } else if (loadSymbol(hcpp, "??2@YAPEAX_K@Z")) |sym| {
+        } else if (loadSymbol(&h_cpp, "??2@YAPEAX_K@Z")) |sym| {
             fn_operator_new = @ptrCast(@alignCast(sym));
         }
     }
