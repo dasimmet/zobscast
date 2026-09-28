@@ -62,6 +62,7 @@ EXPORT void obs_output_signal_stop(obs_output_t *output, int code);
 EXPORT obs_output_t *obs_get_output_by_name(const char *name);
 EXPORT void obs_output_stop(obs_output_t *output);
 EXPORT bool obs_output_active(const obs_output_t *output);
+EXPORT void *obs_output_get_type_data(const obs_output_t *output);
 EXPORT void obs_output_release(obs_output_t *output);
 EXPORT void obs_output_update(obs_output_t *output, obs_data_t *settings);
 EXPORT obs_data_t *obs_output_get_settings(const obs_output_t *output);

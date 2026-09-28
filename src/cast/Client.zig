@@ -107,7 +107,16 @@ pub const Client = struct {
             },
         };
 
-        c.blog(c.LOG_INFO, "zobscast Client: connecting to Chromecast at %u.%u.%u.%u:%u...", ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3], self.port);
+        c.blog(
+            c.LOG_INFO,
+            "zobscast Client: connecting to Chromecast at %u.%u.%u.%u:%u...",
+            ip_bytes[0],
+            ip_bytes[1],
+            ip_bytes[2],
+            ip_bytes[3],
+            self.port,
+        );
+
         const stream = ip_addr.connect(io, .{ .mode = .stream }) catch |err| {
             c.blog(c.LOG_ERROR, "zobscast Client: failed to connect to %s:%u: %s", self.ip.ptr, self.port, @errorName(err).ptr);
             return err;

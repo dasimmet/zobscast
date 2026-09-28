@@ -87,10 +87,6 @@ pub fn loadSettings() ?*c.obs_data_t {
     return null;
 }
 
-fn bufPrintZ(buf: []u8, comptime fmt: []const u8, args: anytype) ![:0]u8 {
-    return std.mem.printSentinel(buf, fmt, args, 0);
-}
-
 pub fn saveSettings(settings: *c.obs_data_t) void {
     const path = getConfigPath();
     if (path) |p| {
@@ -98,7 +94,7 @@ pub fn saveSettings(settings: *c.obs_data_t) void {
         const path_slice = std.mem.span(p);
         if (std.fs.path.dirname(path_slice)) |dir| {
             var dir_buf: [512:0]u8 = undefined;
-            if (bufPrintZ(&dir_buf, "{s}", .{dir})) |dir_z| {
+            if (std.mem.printSentinel(&dir_buf, "{s}", .{dir}, 0)) |dir_z| {
                 _ = c.os_mkdirs(dir_z.ptr);
             } else |_| {}
         }
@@ -221,6 +217,7 @@ fn create(settings: ?*c.struct_obs_data, ptr: ?*c.struct_obs_output) callconv(.c
         }
     }
 
+    std.log.debug("Output; {@}", .{&self});
     return self;
 }
 
@@ -272,7 +269,6 @@ pub fn get_defaults(settings: ?*c.obs_data_t) callconv(.c) void {
 }
 
 pub fn get_properties(ctx: ?*anyopaque) callconv(.c) ?*c.obs_properties_t {
-    _ = ctx;
     c.blog(c.LOG_INFO, "zobscast get_properties");
     const props = c.obs_properties_create();
 
@@ -300,27 +296,6 @@ pub fn get_properties(ctx: ?*anyopaque) callconv(.c) ?*c.obs_properties_t {
         c.OBS_COMBO_TYPE_EDITABLE,
         c.OBS_COMBO_FORMAT_STRING,
     );
-
-    // Initial mDNS discovery if needed
-    self.ensureDiscovery();
-    if (self.discovery) |*disc| {
-        disc.scan(800) catch {};
-
-        var dev_list: std.ArrayList(Device) = .empty;
-        defer {
-            for (dev_list.items) |d| d.deinit(std.heap.c_allocator);
-            dev_list.deinit(std.heap.c_allocator);
-        }
-        disc.getDevices(std.heap.c_allocator, &dev_list) catch {};
-
-        for (dev_list.items) |d| {
-            var label_buf: [256]u8 = undefined;
-            const label = bufPrintZ(&label_buf, "{s} ({s})", .{ d.name, d.ip }) catch d.name;
-            var ip_z: [64:0]u8 = undefined;
-            const ip_slice = bufPrintZ(&ip_z, "{s}", .{d.ip}) catch d.ip;
-            _ = c.obs_property_list_add_string(list, label.ptr, ip_slice.ptr);
-        }
-    }
 
     _ = c.obs_properties_add_button(
         props,
@@ -357,6 +332,40 @@ pub fn get_properties(ctx: ?*anyopaque) callconv(.c) ?*c.obs_properties_t {
         "debug_logging",
         "Enable Verbose Debug Logging",
     );
+
+    if (ctx) |selfptr| {
+        const self: *Output = @ptrCast(@alignCast(selfptr));
+        // Initial mDNS discovery if needed
+        self.ensureDiscovery();
+        if (self.discovery) |*disc| {
+            disc.scan(800) catch {};
+
+            var dev_list: std.ArrayList(Device) = .empty;
+            defer {
+                for (dev_list.items) |d| d.deinit(std.heap.c_allocator);
+                dev_list.deinit(std.heap.c_allocator);
+            }
+            disc.getDevices(std.heap.c_allocator, &dev_list) catch {};
+
+            for (dev_list.items) |d| {
+                var label_buf: [256]u8 = undefined;
+                const label = std.mem.printSentinel(
+                    &label_buf,
+                    "{s} ({s})",
+                    .{ d.name, d.ip },
+                    0,
+                ) catch d.name;
+                var ip_z: [64:0]u8 = undefined;
+                const ip_slice = std.mem.printSentinel(
+                    &ip_z,
+                    "{s}",
+                    .{d.ip},
+                    0,
+                ) catch d.ip;
+                _ = c.obs_property_list_add_string(list, label.ptr, ip_slice.ptr);
+            }
+        }
+    }
 
     return props;
 }
@@ -524,7 +533,12 @@ fn connectThread(self: *Output) void {
     const local_ip = Server.getLocalIpFor(target_ip, &ip_buf) catch "127.0.0.1";
 
     var url_buf: [256]u8 = undefined;
-    const stream_url = bufPrintZ(&url_buf, "http://{s}:{d}/live.mp4", .{ local_ip, server.port }) catch "http://127.0.0.1:8010/live.mp4";
+    const stream_url = std.mem.printSentinel(
+        &url_buf,
+        "http://{s}:{d}/live.mp4",
+        .{ local_ip, server.port },
+        0,
+    ) catch "http://127.0.0.1:8010/live.mp4";
     c.blog(c.LOG_INFO, "zobscast: stream endpoint prepared at %s", stream_url.ptr);
 
     // 5. Begin data capture (encoders already initialized in start())

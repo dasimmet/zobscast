@@ -1,6 +1,5 @@
 const c = @import("c");
 const std = @import("std");
-const Output = @import("Output.zig");
 
 pub const info = c.obs_source_info{
     .id = "zobscast",
@@ -11,8 +10,6 @@ pub const info = c.obs_source_info{
     .destroy = destroy,
     .get_width = width,
     .get_height = height,
-    .get_defaults = Output.get_defaults,
-    .get_properties = Output.get_properties,
     .update = update,
 };
 
@@ -37,15 +34,8 @@ fn destroy(data: ?*anyopaque) callconv(.c) void {
 
 fn update(data: ?*anyopaque, settings: ?*c.obs_data_t) callconv(.c) void {
     _ = data;
+    _ = settings;
     c.blog(c.LOG_INFO, "zobscast source update");
-    if (settings) |s| {
-        Output.saveSettings(s);
-        const output = c.obs_get_output_by_name(Output.info.id);
-        if (output) |out| {
-            defer c.obs_output_release(out);
-            c.obs_output_update(out, s);
-        }
-    }
 }
 
 fn width(ctx: ?*anyopaque) callconv(.c) u32 {

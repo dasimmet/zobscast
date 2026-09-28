@@ -29,6 +29,7 @@ EXPORTS
     obs_output_create
     obs_output_end_data_capture
     obs_output_get_height
+    obs_output_get_type_data
     obs_output_get_video
     obs_output_get_video_encoder
     obs_output_get_width
