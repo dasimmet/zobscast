@@ -1,9 +1,9 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const c = @import("c");
 
 pub const Client = @This();
 
+max_attempts: usize = 30,
 ip: []const u8,
 port: u16,
 allocator: std.mem.Allocator,
@@ -43,16 +43,16 @@ pub fn startCast(self: *Client, stream_url: []const u8) !void {
     var it = std.mem.splitScalar(u8, self.ip, '.');
     while (it.next()) |part| : (part_idx += 1) {
         if (part_idx >= 4) {
-            c.blog(c.LOG_ERROR, "zobscast Client: IP has more than 4 octets: %.*s", @as(c_int, @intCast(self.ip.len)), self.ip.ptr);
+            std.log.err("zobscast Client: IP has more than 4 octets: {s}", .{self.ip});
             return error.InvalidIp;
         }
         ip_bytes[part_idx] = std.fmt.parseInt(u8, part, 10) catch |err| {
-            c.blog(c.LOG_ERROR, "zobscast Client: invalid IP octet '%.*s' in '%.*s': %s", @as(c_int, @intCast(part.len)), part.ptr, @as(c_int, @intCast(self.ip.len)), self.ip.ptr, @errorName(err).ptr);
+            std.log.err("zobscast Client: invalid IP octet '{s}' in '{s}': {}", .{ part, self.ip, err });
             return error.InvalidIp;
         };
     }
     if (part_idx != 4) {
-        c.blog(c.LOG_ERROR, "zobscast Client: IP has %d octets (expected 4): %.*s", part_idx, @as(c_int, @intCast(self.ip.len)), self.ip.ptr);
+        std.log.err("zobscast Client: IP has {d} octets (expected 4): {s}", .{ part_idx, self.ip });
         return error.InvalidIp;
     }
 
@@ -63,18 +63,20 @@ pub fn startCast(self: *Client, stream_url: []const u8) !void {
         },
     };
 
-    c.blog(
-        c.LOG_INFO,
-        "zobscast Client: connecting to Chromecast at %u.%u.%u.%u:%u...",
+    std.log.info("zobscast Client: connecting to Chromecast at {d}.{d}.{d}.{d}:{d}...", .{
         ip_bytes[0],
         ip_bytes[1],
         ip_bytes[2],
         ip_bytes[3],
         self.port,
-    );
+    });
 
     const stream = ip_addr.connect(io, .{ .mode = .stream }) catch |err| {
-        c.blog(c.LOG_ERROR, "zobscast Client: failed to connect to %.*s:%u: %s", @as(c_int, @intCast(self.ip.len)), self.ip.ptr, self.port, @errorName(err).ptr);
+        std.log.err("zobscast Client: failed to connect to {s}:{d}: {}", .{
+            self.ip,
+            self.port,
+            err,
+        });
         return err;
     };
     self.stream = stream;
@@ -107,7 +109,7 @@ pub fn startCast(self: *Client, stream_url: []const u8) !void {
     self.tls_client = tls_ptr;
     self.running.store(true, .monotonic);
 
-    c.blog(c.LOG_INFO, "zobscast TLS handshake with Chromecast established");
+    std.log.info("zobscast TLS handshake with Chromecast established", .{});
 
     // Step 1: Connect to receiver-0
     try self.sendJsonMessage(
@@ -131,8 +133,7 @@ pub fn startCast(self: *Client, stream_url: []const u8) !void {
     try self.waitForTransportId();
 
     if (self.transport_id) |tid| {
-        c.blog(c.LOG_INFO, "zobscast launched Media Receiver, transportId: %.*s", @as(c_int, @intCast(tid.len)), tid.ptr);
-
+        std.log.info("zobscast launched Media Receiver, transportId: {s}", .{tid});
         // Step 4: Connect to the transportId
         try self.sendJsonMessage(
             "sender-0",
@@ -156,7 +157,7 @@ pub fn startCast(self: *Client, stream_url: []const u8) !void {
                 .autoplay = true,
             },
         );
-        c.blog(c.LOG_INFO, "zobscast sent media LOAD for URL: %.*s", @as(c_int, @intCast(stream_url.len)), stream_url.ptr);
+        std.log.info("zobscast sent media LOAD for URL: {s}", .{stream_url});
 
         // Step 6: Start heartbeat thread
         self.heartbeat_thread = try std.Thread.spawn(.{}, heartbeatLoop, .{self});
@@ -245,7 +246,10 @@ fn sendMessage(
         const raw_msg = try encodeCastMessage(self.allocator, src, dst, ns, payload);
         defer self.allocator.free(raw_msg);
 
-        c.blog(c.LOG_INFO, "zobscast CastV2 tx: ns='%.*s' payload='%.*s'", @as(c_int, @intCast(ns.len)), ns.ptr, @as(c_int, @intCast(@min(payload.len, 200))), payload.ptr);
+        std.log.info("zobscast CastV2 tx: ns='{s}' payload='{s}'", .{
+            ns,
+            payload[0..@min(payload.len, 200)],
+        });
         _ = try tls.writer.write(raw_msg);
         try tls.writer.flush();
         if (self.stream_writer) |*sw| {
@@ -257,9 +261,9 @@ fn sendMessage(
 fn waitForTransportId(self: *Client) !void {
     var buf: [8192]u8 = undefined;
 
-    c.blog(c.LOG_INFO, "zobscast CastV2: waiting for receiver response...");
+    std.log.info("zobscast CastV2: waiting for receiver response...", .{});
     var attempts: usize = 0;
-    while (attempts < 30 and self.transport_id == null) : (attempts += 1) {
+    while (attempts < self.max_attempts and self.transport_id == null) : (attempts += 1) {
         if (self.tls_client) |tls| {
             // Read 4-byte big-endian message length
             var len_bytes: [4]u8 = undefined;
@@ -274,7 +278,11 @@ fn waitForTransportId(self: *Client) !void {
             const ns = extractPbString(msg, 4) orelse "";
             const payload = extractPbString(msg, 6) orelse "";
 
-            c.blog(c.LOG_INFO, "zobscast CastV2 rx [%zu]: ns='%.*s' payload='%.*s'", attempts, @as(c_int, @intCast(ns.len)), ns.ptr, @as(c_int, @intCast(@min(payload.len, 200))), payload.ptr);
+            std.log.info("zobscast CastV2 rx [{}]: ns='{s}' payload='{s}'", .{
+                attempts,
+                ns,
+                payload[0..@min(payload.len, 200)],
+            });
 
             if (std.mem.eql(u8, ns, "urn:x-cast:com.google.cast.tp.heartbeat")) {
                 const parsed = std.json.parseFromSlice(
@@ -287,7 +295,7 @@ fn waitForTransportId(self: *Client) !void {
                     defer p.deinit();
                     if (std.mem.eql(u8, p.value.type, "PING")) {
                         // Reply with PONG to keep the connection alive
-                        c.blog(c.LOG_INFO, "zobscast CastV2: replying PONG");
+                        std.log.info("zobscast CastV2: replying PONG", .{});
                         self.sendJsonMessage(
                             "sender-0",
                             "receiver-0",
@@ -303,7 +311,7 @@ fn waitForTransportId(self: *Client) !void {
     }
 
     if (self.transport_id == null) {
-        c.blog(c.LOG_ERROR, "zobscast CastV2: no transportId found after %d messages", @as(c_int, 30));
+        std.log.err("zobscast CastV2: no transportId found after {d} messages", .{self.max_attempts});
     }
 }
 

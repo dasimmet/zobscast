@@ -1,21 +1,23 @@
-const c = @import("c");
 const std = @import("std");
+const builtin = @import("builtin");
+const c = @import("c");
 const Output = @import("Output.zig");
 const gui = @import("gui.zig");
 
 const ObsFrontendEvent = CTranslateEnum(c, c_int, "OBS_FRONTEND_EVENT_");
 
 pub const std_options: std.Options = .{
+    .log_level = if (builtin.mode == .debug) .debug else .info,
     .logFn = stdLogFn,
 };
 
 fn stdLogFn(comptime level: std.log.Level, comptime _: @EnumLiteral(), comptime fmt: []const u8, args: anytype) void {
-    var buf: [4096]u8 = undefined;
+    var buf: [1024]u8 = undefined;
     const clevel = switch (level) {
         .debug => c.LOG_DEBUG,
         .err => c.LOG_ERROR,
         .info => c.LOG_INFO,
-        .warn => c.LOG_WARN,
+        .warn => c.LOG_WARNING,
     };
     const msg = std.fmt.bufPrintSentinel(&buf, fmt, args, 0) catch {
         c.blog(clevel, "zobscast log buffer overflow: " ++ fmt);
@@ -25,16 +27,16 @@ fn stdLogFn(comptime level: std.log.Level, comptime _: @EnumLiteral(), comptime 
 }
 
 export fn obs_module_load() callconv(.c) bool {
-    c.blog(c.LOG_INFO, "zobscast module_load");
-    c.blog(c.LOG_INFO, "zobscast obs_register_output");
+    std.log.info("zobscast module_load", .{});
+    std.log.info("zobscast obs_register_output", .{});
     c.obs_register_output(&Output.info);
-    c.blog(c.LOG_INFO, "zobscast obs_frontend_add_event_callback");
+    std.log.info("zobscast obs_frontend_add_event_callback", .{});
     c.obs_frontend_add_event_callback(OBSEvent, null);
     return true;
 }
 
 export fn obs_module_unload() callconv(.c) void {
-    c.blog(c.LOG_INFO, "zobscast module_unload");
+    std.log.info("zobscast module_unload", .{});
 
     const output = c.obs_get_output_by_name(Output.info.id);
     if (output) |out| {
@@ -47,24 +49,24 @@ export fn obs_module_unload() callconv(.c) void {
 
 pub fn openOptions(ctx: ?*anyopaque) callconv(.c) void {
     _ = ctx;
-    c.blog(c.LOG_INFO, "zobscast openOptions");
+    std.log.info("zobscast openOptions", .{});
     const output = Output.getOrCreateOutput();
     if (output) |out| {
         var url_buf: [128]u8 = undefined;
         if (out.getSettingsUrl(&url_buf)) |url| {
             gui.openSettings(url);
         } else |err| {
-            c.blog(c.LOG_ERROR, "zobscast: failed to get settings URL: %s", @errorName(err).ptr);
+            std.log.err("zobscast: failed to get settings URL: {}", .{err});
         }
     } else {
-        c.blog(c.LOG_ERROR, "zobscast: could not get or create output for settings");
+        std.log.err("zobscast: could not get or create output for settings", .{});
     }
 }
 
 fn OBSEvent(ev: c_uint, ctx: ?*anyopaque) callconv(.c) void {
     _ = ctx;
     const evt: ObsFrontendEvent = @enumFromInt(ev);
-    c.blog(c.LOG_INFO, "zobscast frontend event: %u %s", ev, @tagName(evt).ptr);
+    std.log.info("zobscast frontend event: {d} {}", .{ ev, evt });
     switch (evt) {
         .FINISHED_LOADING => {
             const toggle_local: [*c]const u8 = obs_module_text("Zobscast.Toggle");
