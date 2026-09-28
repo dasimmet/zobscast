@@ -21,6 +21,8 @@ connect_thread: ?std.Thread = null,
 mutex: std.atomic.Mutex = .unlocked,
 discovery_mutex: std.atomic.Mutex = .unlocked,
 debug_logging: bool = false,
+enable_video: bool = true,
+enable_audio: bool = true,
 packet_count: usize = 0,
 allocator: std.mem.Allocator,
 
@@ -153,7 +155,11 @@ pub fn loadSettings() ?*c.obs_data_t {
     const path = getConfigPath();
     if (path) |p| {
         defer c.bfree(p);
-        return c.obs_data_create_from_json_file(p);
+        const data = c.obs_data_create_from_json_file(p);
+        if (data) |d| {
+            get_defaults(d);
+            return d;
+        }
     }
     return null;
 }
@@ -366,6 +372,8 @@ fn update(ctx: ?*anyopaque, settings: ?*c.obs_data_t) callconv(.c) void {
 
 pub fn applySettings(self: *Output, settings: *c.obs_data_t) void {
     self.debug_logging = c.obs_data_get_bool(settings, "debug_logging");
+    self.enable_video = c.obs_data_get_bool(settings, "enable_video");
+    self.enable_audio = c.obs_data_get_bool(settings, "enable_audio");
     const sink_str = c.obs_data_get_string(settings, "sink");
     if (sink_str != null and sink_str[0] != 0) {
         const slice = std.mem.span(sink_str);
@@ -384,6 +392,8 @@ pub fn get_defaults(settings: ?*c.obs_data_t) callconv(.c) void {
     c.obs_data_set_default_string(settings, "preset", "ultrafast");
     c.obs_data_set_default_string(settings, "rate_control", "CRF");
     c.obs_data_set_default_bool(settings, "debug_logging", false);
+    c.obs_data_set_default_bool(settings, "enable_video", true);
+    c.obs_data_set_default_bool(settings, "enable_audio", true);
 }
 
 pub fn get_properties(ctx: ?*anyopaque) callconv(.c) ?*c.obs_properties_t {
@@ -444,6 +454,18 @@ pub fn get_properties(ctx: ?*anyopaque) callconv(.c) ?*c.obs_properties_t {
     _ = c.obs_property_list_add_string(preset_prop, "faster", "faster");
     _ = c.obs_property_list_add_string(preset_prop, "fast", "fast");
     _ = c.obs_property_list_add_string(preset_prop, "medium", "medium");
+
+    _ = c.obs_properties_add_bool(
+        props,
+        "enable_video",
+        "Enable Video Output",
+    );
+
+    _ = c.obs_properties_add_bool(
+        props,
+        "enable_audio",
+        "Enable Audio Output",
+    );
 
     _ = c.obs_properties_add_bool(
         props,
@@ -655,13 +677,21 @@ fn connectThread(self: *Output) void {
         }
     }
 
+    if (!self.enable_video and !self.enable_audio) {
+        std.log.err("zobscast: cannot start casting: both video and audio are disabled", .{});
+        c.obs_output_signal_stop(self.ptr, c.OBS_OUTPUT_BAD_PATH);
+        return;
+    }
+
     const muxer = Muxer.init(
         self.allocator,
         onMuxedData,
         self,
+        self.enable_video,
         width,
         height,
         extradata_slice,
+        self.enable_audio,
         audio_sample_rate,
         audio_channels,
         a_extradata_slice,
@@ -785,6 +815,8 @@ fn get_data(ctx: ?*anyopaque, d: [*c]c.struct_encoder_packet) callconv(.c) void 
     }
 
     const is_audio = (d.*.type == c.OBS_ENCODER_AUDIO);
+    if (is_audio and !self.enable_audio) return;
+    if (!is_audio and !self.enable_video) return;
 
     self.packet_count +%= 1;
     if (self.debug_logging and (self.packet_count % 120 == 0)) {

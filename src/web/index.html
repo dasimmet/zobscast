@@ -45,13 +45,26 @@
   <div class="card">
     <div class="card-title" data-i18n="Encoding.Title">Video &amp; Encoding</div>
     <div class="form-row">
+      <label class="form-label" data-i18n="Encoding.EnableVideo">Video Stream</label>
+      <div class="form-control">
+        <label class="toggle-switch">
+          <input type="checkbox" id="enableVideo" checked>
+          <div class="switch-track">
+            <div class="switch-thumb"></div>
+          </div>
+          <span style="font-size:12px; color:var(--text-secondary);" data-i18n="Encoding.EnableVideoDesc">Stream OBS
+            canvas video</span>
+        </label>
+      </div>
+    </div>
+    <div class="form-row" id="bitrateRow">
       <label class="form-label" for="bitrateInput" data-i18n="Encoding.Bitrate">Bitrate</label>
       <div class="form-control">
         <input type="number" id="bitrateInput" min="500" max="50000" step="250" value="2500">
         <span class="input-suffix" data-i18n="Encoding.BitrateSuffix">kbps</span>
       </div>
     </div>
-    <div class="form-row">
+    <div class="form-row" id="presetRow">
       <label class="form-label" for="presetSelect" data-i18n="Encoding.Preset">Preset</label>
       <div class="form-control">
         <select id="presetSelect">
@@ -67,15 +80,32 @@
   </div>
 
   <div class="card">
+    <div class="card-title" data-i18n="Audio.Title">Audio</div>
+    <div class="form-row">
+      <label class="form-label" data-i18n="Audio.EnableAudio">Audio Stream</label>
+      <div class="form-control">
+        <label class="toggle-switch">
+          <input type="checkbox" id="enableAudio" checked>
+          <div class="switch-track">
+            <div class="switch-thumb"></div>
+          </div>
+          <span style="font-size:12px; color:var(--text-secondary);" data-i18n="Audio.EnableAudioDesc">Stream OBS master
+            audio</span>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
     <div class="card-title" data-i18n="Diagnostics.Title">Diagnostics</div>
     <div class="form-row">
       <label class="form-label" data-i18n="Diagnostics.VerboseLogging">Verbose Logging</label>
       <div class="form-control">
         <label class="toggle-switch">
           <input type="checkbox" id="debugLog">
-          <div class="switch-track">
-            <div class="switch-thumb"></div>
-          </div>
+          <span class="switch-track">
+            <span class="switch-thumb"></span>
+          </span>
           <span style="font-size:12px; color:var(--text-secondary);" data-i18n="Diagnostics.VerboseLoggingDesc">Log
             video packet stats to OBS log</span>
         </label>

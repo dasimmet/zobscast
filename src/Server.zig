@@ -323,12 +323,26 @@ fn handleGetSettings(self: *Server, client_fd: c.SOCKET) void {
     else
         "ultrafast";
     const debug_log = if (saved_opt) |s| c.obs_data_get_bool(s, "debug_logging") else false;
+    const enable_video = if (out_opt) |out|
+        out.enable_video
+    else if (saved_opt) |s|
+        c.obs_data_get_bool(s, "enable_video")
+    else
+        true;
+    const enable_audio = if (out_opt) |out|
+        out.enable_audio
+    else if (saved_opt) |s|
+        c.obs_data_get_bool(s, "enable_audio")
+    else
+        true;
 
     const json = std.json.Stringify.valueAlloc(self.allocator, .{
         .sink = sink_str,
         .bitrate = if (bitrate > 0) bitrate else 2500,
         .preset = preset_str,
         .debug_logging = debug_log,
+        .enable_video = enable_video,
+        .enable_audio = enable_audio,
         .active = is_active,
     }, .{}) catch {
         self.sendJsonResponse(client_fd, "{\"error\":\"json_error\"}");
@@ -368,6 +382,16 @@ fn handleGetLocale(self: *Server, client_fd: c.SOCKET) void {
         .@"Encoding.Bitrate" = root.getLocaleString("Zobscast.Encoding.Bitrate", "Bitrate"),
         .@"Zobscast.Encoding.BitrateSuffix" = root.getLocaleString("Zobscast.Encoding.BitrateSuffix", "kbps"),
         .@"Encoding.BitrateSuffix" = root.getLocaleString("Zobscast.Encoding.BitrateSuffix", "kbps"),
+        .@"Zobscast.Encoding.EnableVideo" = root.getLocaleString("Zobscast.Encoding.EnableVideo", "Video Stream"),
+        .@"Encoding.EnableVideo" = root.getLocaleString("Zobscast.Encoding.EnableVideo", "Video Stream"),
+        .@"Zobscast.Encoding.EnableVideoDesc" = root.getLocaleString("Zobscast.Encoding.EnableVideoDesc", "Stream OBS canvas video"),
+        .@"Encoding.EnableVideoDesc" = root.getLocaleString("Zobscast.Encoding.EnableVideoDesc", "Stream OBS canvas video"),
+        .@"Zobscast.Audio.Title" = root.getLocaleString("Zobscast.Audio.Title", "Audio"),
+        .@"Audio.Title" = root.getLocaleString("Zobscast.Audio.Title", "Audio"),
+        .@"Zobscast.Audio.EnableAudio" = root.getLocaleString("Zobscast.Audio.EnableAudio", "Audio Stream"),
+        .@"Audio.EnableAudio" = root.getLocaleString("Zobscast.Audio.EnableAudio", "Audio Stream"),
+        .@"Zobscast.Audio.EnableAudioDesc" = root.getLocaleString("Zobscast.Audio.EnableAudioDesc", "Stream OBS master audio"),
+        .@"Audio.EnableAudioDesc" = root.getLocaleString("Zobscast.Audio.EnableAudioDesc", "Stream OBS master audio"),
         .@"Zobscast.Encoding.Preset" = root.getLocaleString("Zobscast.Encoding.Preset", "Preset"),
         .@"Encoding.Preset" = root.getLocaleString("Zobscast.Encoding.Preset", "Preset"),
         .@"Zobscast.Encoding.Preset.Ultrafast" = root.getLocaleString("Zobscast.Encoding.Preset.Ultrafast", "ultrafast (lowest delay)"),
@@ -452,6 +476,8 @@ const UpdateSettingsPayload = struct {
     bitrate: ?i64 = null,
     preset: ?[]const u8 = null,
     debug_logging: ?bool = null,
+    enable_video: ?bool = null,
+    enable_audio: ?bool = null,
 };
 
 fn handleUpdateSettings(self: *Server, client_fd: c.SOCKET, req_slice: []const u8) void {
@@ -491,6 +517,12 @@ fn handleUpdateSettings(self: *Server, client_fd: c.SOCKET, req_slice: []const u
     }
     if (parsed.value.debug_logging) |dbg| {
         c.obs_data_set_bool(settings, "debug_logging", dbg);
+    }
+    if (parsed.value.enable_video) |ev| {
+        c.obs_data_set_bool(settings, "enable_video", ev);
+    }
+    if (parsed.value.enable_audio) |ea| {
+        c.obs_data_set_bool(settings, "enable_audio", ea);
     }
 
     Output.saveSettings(settings);

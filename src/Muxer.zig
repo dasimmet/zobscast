@@ -67,14 +67,16 @@ pub fn init(
     allocator: std.mem.Allocator,
     on_data: OnDataFn,
     data_ctx: ?*anyopaque,
+    has_video: bool,
     width: u32,
     height: u32,
     video_extradata: ?[]const u8,
+    has_audio: bool,
     audio_sample_rate: u32,
     audio_channels: u32,
     audio_extradata: ?[]const u8,
 ) !*Muxer {
-    std.log.info("zobscast Muxer: initializing in-memory FFmpeg muxer ({d}x{d}, audio={d}Hz/{d}ch)...", .{ width, height, audio_sample_rate, audio_channels });
+    std.log.info("zobscast Muxer: initializing in-memory FFmpeg muxer (video={}, audio={})...", .{ has_video, has_audio });
     const self = try allocator.create(Muxer);
     self.* = .{
         .on_data = on_data,
@@ -110,29 +112,31 @@ pub fn init(
     self.format_ctx = fmt_ctx;
     self.format_ctx.?.pb = self.avio_ctx;
 
-    self.video_stream = avformat_new_stream(self.format_ctx.?, null) orelse {
-        std.log.err("zobscast Muxer: avformat_new_stream for video failed", .{});
-        return error.NewStreamFailed;
-    };
+    if (has_video) {
+        self.video_stream = avformat_new_stream(self.format_ctx.?, null) orelse {
+            std.log.err("zobscast Muxer: avformat_new_stream for video failed", .{});
+            return error.NewStreamFailed;
+        };
 
-    self.video_stream.?.codecpar.codec_type = .VIDEO;
-    self.video_stream.?.codecpar.codec_id = .H264;
-    self.video_stream.?.codecpar.width = @intCast(width);
-    self.video_stream.?.codecpar.height = @intCast(height);
-    self.video_stream.?.time_base = .{ .num = 1, .den = 1000 };
+        self.video_stream.?.codecpar.codec_type = .VIDEO;
+        self.video_stream.?.codecpar.codec_id = .H264;
+        self.video_stream.?.codecpar.width = @intCast(width);
+        self.video_stream.?.codecpar.height = @intCast(height);
+        self.video_stream.?.time_base = .{ .num = 1, .den = 1000 };
 
-    if (video_extradata) |extra| {
-        if (extra.len > 0) {
-            const extra_buf = av_malloc(extra.len + 64) orelse return error.OutOfMemory;
-            @memcpy(extra_buf[0..extra.len], extra);
-            @memset(extra_buf[extra.len .. extra.len + 64], 0);
-            self.video_stream.?.codecpar.extradata = extra_buf;
-            self.video_stream.?.codecpar.extradata_size = @intCast(extra.len);
-            std.log.info("zobscast Muxer: set video codecpar.extradata ({d} bytes)", .{extra.len});
+        if (video_extradata) |extra| {
+            if (extra.len > 0) {
+                const extra_buf = av_malloc(extra.len + 64) orelse return error.OutOfMemory;
+                @memcpy(extra_buf[0..extra.len], extra);
+                @memset(extra_buf[extra.len .. extra.len + 64], 0);
+                self.video_stream.?.codecpar.extradata = extra_buf;
+                self.video_stream.?.codecpar.extradata_size = @intCast(extra.len);
+                std.log.info("zobscast Muxer: set video codecpar.extradata ({d} bytes)", .{extra.len});
+            }
         }
     }
 
-    if (audio_sample_rate > 0 and audio_channels > 0) {
+    if (has_audio and audio_sample_rate > 0 and audio_channels > 0) {
         self.audio_stream = avformat_new_stream(self.format_ctx.?, null) orelse {
             std.log.err("zobscast Muxer: avformat_new_stream for audio failed", .{});
             return error.NewStreamFailed;
@@ -158,6 +162,7 @@ pub fn init(
 
     var opts: ?*anyopaque = null;
     _ = av_dict_set(&opts, "movflags", "frag_keyframe+empty_moov+default_base_moof", 0);
+    _ = av_dict_set(&opts, "frag_duration", "1000000", 0);
     _ = av_dict_set(&opts, "brand", "iso6", 0);
 
     const write_ret = avformat_write_header(self.format_ctx.?, &opts);
