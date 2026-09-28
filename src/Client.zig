@@ -114,7 +114,7 @@ pub fn startCast(self: *Client, stream_url: []const u8) !void {
         "sender-0",
         "receiver-0",
         "urn:x-cast:com.google.cast.tp.connection",
-        ConnectMessage{},
+        Message.Connect,
     );
 
     // Step 2: Launch Default Media Receiver (appId: CC1AD845)
@@ -122,8 +122,7 @@ pub fn startCast(self: *Client, stream_url: []const u8) !void {
         "sender-0",
         "receiver-0",
         "urn:x-cast:com.google.cast.receiver",
-        LaunchMessage{
-            .appId = "CC1AD845",
+        Message.Launch{
             .requestId = 1,
         },
     );
@@ -139,7 +138,7 @@ pub fn startCast(self: *Client, stream_url: []const u8) !void {
             "sender-0",
             tid,
             "urn:x-cast:com.google.cast.tp.connection",
-            ConnectMessage{},
+            Message.Connect,
         );
 
         // Step 5: Send LOAD command with media URL
@@ -147,7 +146,7 @@ pub fn startCast(self: *Client, stream_url: []const u8) !void {
             "sender-0",
             tid,
             "urn:x-cast:com.google.cast.media",
-            LoadMessage{
+            Message.Load{
                 .requestId = 2,
                 .media = .{
                     .contentId = stream_url,
@@ -166,50 +165,59 @@ pub fn startCast(self: *Client, stream_url: []const u8) !void {
     }
 }
 
-pub const ConnectMessage = struct {
-    type: []const u8 = "CONNECT",
-};
-
-pub const LaunchMessage = struct {
-    type: []const u8 = "LAUNCH",
-    appId: []const u8,
-    requestId: u32,
-};
-
-pub const MediaInfo = struct {
-    contentId: []const u8,
-    contentType: []const u8 = "video/mp4",
-    streamType: []const u8 = "LIVE",
-};
-
-pub const LoadMessage = struct {
-    type: []const u8 = "LOAD",
-    requestId: u32,
-    media: MediaInfo,
-    autoplay: bool = true,
-};
-
-pub const HeartbeatMessage = struct {
+pub const Message = struct {
     type: []const u8,
-};
+    pub const Connect: Message = .{
+        .type = "CONNECT",
+    };
+    pub const Stop: Message = .{
+        .type = "STOP",
+    };
 
-pub const StopMessage = struct {
-    type: []const u8 = "STOP",
-};
+    pub const Launch = struct {
+        type: []const u8 = "LAUNCH",
+        appId: []const u8 = "CC1AD845",
+        requestId: u32,
+    };
 
-pub const Application = struct {
-    appId: ?[]const u8 = null,
-    sessionId: ?[]const u8 = null,
-    transportId: ?[]const u8 = null,
-};
+    pub const Load = struct {
+        type: []const u8 = "LOAD",
+        requestId: u32,
+        media: MediaInfo,
+        autoplay: bool = true,
 
-pub const ReceiverStatus = struct {
-    applications: ?[]const Application = null,
-};
+        pub const MediaInfo = struct {
+            contentId: []const u8,
+            contentType: []const u8 = "video/mp4",
+            streamType: []const u8 = "LIVE",
+        };
+    };
 
-pub const ReceiverResponse = struct {
-    requestId: ?i64 = null,
-    status: ?ReceiverStatus = null,
+    pub const Heartbeat = struct {
+        type: []const u8,
+
+        pub const PING: Heartbeat = .{
+            .type = "PING",
+        };
+        pub const PONG: Heartbeat = .{
+            .type = "PONG",
+        };
+    };
+
+    pub const ReceiverResponse = struct {
+        requestId: ?i64 = null,
+        status: ?ReceiverStatus = null,
+
+        pub const ReceiverStatus = struct {
+            applications: ?[]const Application = null,
+
+            pub const Application = struct {
+                appId: ?[]const u8 = null,
+                sessionId: ?[]const u8 = null,
+                transportId: ?[]const u8 = null,
+            };
+        };
+    };
 };
 
 fn sendJsonMessage(
@@ -270,7 +278,7 @@ fn waitForTransportId(self: *Client) !void {
 
             if (std.mem.eql(u8, ns, "urn:x-cast:com.google.cast.tp.heartbeat")) {
                 const parsed = std.json.parseFromSlice(
-                    HeartbeatMessage,
+                    Message.Heartbeat,
                     self.allocator,
                     payload,
                     .{ .ignore_unknown_fields = true },
@@ -284,7 +292,7 @@ fn waitForTransportId(self: *Client) !void {
                             "sender-0",
                             "receiver-0",
                             "urn:x-cast:com.google.cast.tp.heartbeat",
-                            HeartbeatMessage{ .type = "PONG" },
+                            Message.Heartbeat.PONG,
                         ) catch {};
                     }
                 }
@@ -386,7 +394,7 @@ fn extractTransportId(self: *Client, msg_bytes: []const u8) !void {
 }
 
 fn parseJsonForTransportId(self: *Client, json_bytes: []const u8) !void {
-    const parsed = std.json.parseFromSlice(ReceiverResponse, self.allocator, json_bytes, .{
+    const parsed = std.json.parseFromSlice(Message.ReceiverResponse, self.allocator, json_bytes, .{
         .ignore_unknown_fields = true,
     }) catch {
         try self.parseJsonForTransportIdFallback(json_bytes);
@@ -459,7 +467,7 @@ fn heartbeatLoop(self: *Client) void {
             "sender-0",
             "receiver-0",
             "urn:x-cast:com.google.cast.tp.heartbeat",
-            HeartbeatMessage{ .type = "PING" },
+            Message.Heartbeat.PING,
         ) catch break;
     }
 }
@@ -472,7 +480,7 @@ pub fn stop(self: *Client) void {
             "sender-0",
             tid,
             "urn:x-cast:com.google.cast.media",
-            StopMessage{},
+            Message.Stop,
         ) catch {};
     }
 
