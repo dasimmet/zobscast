@@ -39,11 +39,11 @@ jobs:
 
           # macOS x86_64
           - target: x86_64-macos
-            runner: macos-13
+            runner: ubuntu-latest
 
           # macOS aarch64 (Apple Silicon)
           - target: aarch64-macos
-            runner: macos-14
+            runner: ubuntu-latest
 
     steps:
       - name: Checkout
