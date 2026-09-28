@@ -244,7 +244,11 @@ fn addDevice(self: *Discovery, dev: Device) !void {
 
     const owned_dev = try dev.clone(self.allocator);
     try self.devices.append(self.allocator, owned_dev);
-    c.blog(c.LOG_INFO, "zobscast discovered device: %.*s (%.*s:%u)", @as(c_int, @intCast(owned_dev.name.len)), owned_dev.name.ptr, @as(c_int, @intCast(owned_dev.ip.len)), owned_dev.ip.ptr, owned_dev.port);
+    std.log.info("zobscast discovered device: {s} ({s}:{d})", .{
+        owned_dev.name,
+        owned_dev.ip,
+        owned_dev.port,
+    });
 }
 
 pub fn getDevices(self: *Discovery, allocator: std.mem.Allocator, out: *std.ArrayList(Device)) !void {
