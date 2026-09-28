@@ -5,6 +5,25 @@ const gui = @import("gui.zig");
 
 const ObsFrontendEvent = CTranslateEnum(c, c_int, "OBS_FRONTEND_EVENT_");
 
+pub const std_options: std.Options = .{
+    .logFn = stdLogFn,
+};
+
+fn stdLogFn(comptime level: std.log.Level, comptime _: @EnumLiteral(), comptime fmt: []const u8, args: anytype) void {
+    var buf: [4096]u8 = undefined;
+    const clevel = switch (level) {
+        .debug => c.LOG_DEBUG,
+        .err => c.LOG_ERROR,
+        .info => c.LOG_INFO,
+        .warn => c.LOG_WARN,
+    };
+    const msg = std.fmt.bufPrintSentinel(&buf, fmt, args, 0) catch {
+        c.blog(clevel, "zobscast log buffer overflow: " ++ fmt);
+        return;
+    };
+    c.blog(clevel, msg);
+}
+
 export fn obs_module_load() callconv(.c) bool {
     c.blog(c.LOG_INFO, "zobscast module_load");
     c.blog(c.LOG_INFO, "zobscast obs_register_output");
