@@ -55,6 +55,7 @@ jobs:
         shell: bash
         run: |
           zig build \
+            -p zig-out/zobscast \
             -Dtarget=${{ matrix.target }} \
             -Doptimize=ReleaseFast
 
