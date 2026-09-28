@@ -9,8 +9,9 @@
 
 ## Features
 
-- **Native Chromecast (CastV2) protocol** — TLS control channel on port 8009, protobuf wire framing, Default Media Receiver launch and media load, async heartbeat.
+- **Native Chromecast (CastV2) protocol** — TLS control channel on port 8009 by default, protobuf wire framing, Default Media Receiver launch and media load, async heartbeat.
 - **Automatic device discovery** — multicast DNS (`_googlecast._tcp.local`) finds Cast devices and shows friendly names.
+- **Configurable Cast destination port** — use the device's discovered port, the default port 8009, or enter a custom port.
 - **In-memory fragmented MP4 muxer** — uses embedded FFmpeg libraries for live H.264 + AAC streaming without any temporary files.
 - **Built-in HTTP streaming server** — serves the live MP4 stream directly to the Chromecast at the correct LAN address.
 - **Web settings UI** — opens in a native Qt WebView (or system browser as fallback) from the OBS Tools menu.
@@ -47,19 +48,19 @@ cp -r bin data ~/Library/Application\ Support/obs-studio/plugins/zobscast/
 
 1. **Start OBS Studio** — the plugin is loaded automatically.
 2. Open **Tools → Zobscast: Options** to configure settings.
-3. Click **Scan** to find Chromecast devices on your network, or enter an IP address manually.
-4. Adjust the bitrate and encoder preset, then **Save Settings**.
+3. Click **Scan** to find Chromecast devices on your network, or enter an IP address manually. Append `:port` to an address to specify its port directly.
+4. Set the Cast port if needed (default: **8009**), adjust bitrate, encoder preset, and audio/video streams, then click **Save Settings**.
 5. Click **Tools → Zobscast: Toggle** to start or stop casting.
 
 ---
 
 ## Network Requirements
 
-| Port | Protocol      | Direction | Purpose                                           |
-| ---- | ------------- | --------- | ------------------------------------------------- |
-| 5353 | UDP multicast | out       | mDNS device discovery                             |
-| 8009 | TCP (TLS)     | out       | CastV2 control channel                            |
-| auto | TCP (HTTP)    | in        | Media stream (Chromecast pulls from your machine) |
+| Port                         | Protocol      | Direction | Purpose                                           |
+| ---------------------------- | ------------- | --------- | ------------------------------------------------- |
+| 5353                         | UDP multicast | out       | mDNS device discovery                             |
+| 8009 (default; configurable) | TCP (TLS)     | out       | CastV2 control channel                            |
+| auto                         | TCP (HTTP)    | in        | Media stream (Chromecast pulls from your machine) |
 
 ---
 
@@ -111,7 +112,7 @@ OBS Studio
 | [`src/root.zig`](src/root.zig)           | OBS module entry point, Tools menu, locale         |
 | [`src/Output.zig`](src/Output.zig)       | OBS output plugin, encoder setup, stream lifecycle |
 | [`src/Muxer.zig`](src/Muxer.zig)         | In-memory fragmented MP4 muxer (FFmpeg)            |
-| [`src/Server.zig`](src/Server.zig)       | Non-blocking HTTP streaming server                 |
+| [`src/Server.zig`](src/Server.zig)       | HTTP streaming server                              |
 | [`src/Discovery.zig`](src/Discovery.zig) | Zero-dependency mDNS Chromecast discovery          |
 | [`src/Client.zig`](src/Client.zig)       | CastV2 TLS protocol client                         |
 | [`src/gui.zig`](src/gui.zig)             | Qt WebView settings window                         |

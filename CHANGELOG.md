@@ -7,7 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0] - 2024-09-28
+## [0.0.2] - 2026-09-29
+
+### Added
+- Configurable Chromecast destination port in OBS and web settings, including `IP:port` entries and ports reported by discovered devices.
+
+### Changed
+- Migrated Cast, HTTP streaming, and mDNS networking to Zig's `std.Io` APIs with a shared threaded I/O backend.
+- Replaced manual Qt dynamic-library loading with `std.DynLib` on supported platforms.
+
+## [0.0.1] - 2026-09-28
 
 ### Added
 - Initial public release of **Zobscast** — a native Chromecast output plugin for OBS Studio.
@@ -24,5 +33,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Settings are stored in `zobscast.json` in the OBS plugin config directory and survive OBS restarts.
 
-[Unreleased]: https://github.com/dasimmet/zobscast/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/dasimmet/zobscast/releases/tag/v0.1.0
+[Unreleased]: https://github.com/dasimmet/zobscast/compare/v0.0.2...HEAD
+[0.0.2]: https://github.com/dasimmet/zobscast/compare/v0.0.1...v0.0.2
+[0.0.1]: https://github.com/dasimmet/zobscast/releases/tag/v0.0.1
