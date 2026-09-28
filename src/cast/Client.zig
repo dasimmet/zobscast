@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const c = @import("c");
 
 pub const ConnectMessage = struct {
@@ -87,16 +88,16 @@ pub const Client = struct {
         var it = std.mem.splitScalar(u8, self.ip, '.');
         while (it.next()) |part| : (part_idx += 1) {
             if (part_idx >= 4) {
-                c.blog(c.LOG_ERROR, "zobscast Client: IP has more than 4 octets: %s", self.ip.ptr);
+                c.blog(c.LOG_ERROR, "zobscast Client: IP has more than 4 octets: %.*s", @as(c_int, @intCast(self.ip.len)), self.ip.ptr);
                 return error.InvalidIp;
             }
             ip_bytes[part_idx] = std.fmt.parseInt(u8, part, 10) catch |err| {
-                c.blog(c.LOG_ERROR, "zobscast Client: invalid IP octet '%s' in '%s': %s", part.ptr, self.ip.ptr, @errorName(err).ptr);
+                c.blog(c.LOG_ERROR, "zobscast Client: invalid IP octet '%.*s' in '%.*s': %s", @as(c_int, @intCast(part.len)), part.ptr, @as(c_int, @intCast(self.ip.len)), self.ip.ptr, @errorName(err).ptr);
                 return error.InvalidIp;
             };
         }
         if (part_idx != 4) {
-            c.blog(c.LOG_ERROR, "zobscast Client: IP has %d octets (expected 4): %s", part_idx, self.ip.ptr);
+            c.blog(c.LOG_ERROR, "zobscast Client: IP has %d octets (expected 4): %.*s", part_idx, @as(c_int, @intCast(self.ip.len)), self.ip.ptr);
             return error.InvalidIp;
         }
 
@@ -118,12 +119,12 @@ pub const Client = struct {
         );
 
         const stream = ip_addr.connect(io, .{ .mode = .stream }) catch |err| {
-            c.blog(c.LOG_ERROR, "zobscast Client: failed to connect to %s:%u: %s", self.ip.ptr, self.port, @errorName(err).ptr);
+            c.blog(c.LOG_ERROR, "zobscast Client: failed to connect to %.*s:%u: %s", @as(c_int, @intCast(self.ip.len)), self.ip.ptr, self.port, @errorName(err).ptr);
             return err;
         };
         self.stream = stream;
 
-        if (comptime @import("builtin").os.tag != .windows) {
+        if (comptime builtin.os.tag != .windows) {
             const tv: std.posix.timeval = .{ .sec = 8, .usec = 0 };
             std.posix.setsockopt(stream.socket.handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, &std.mem.toBytes(tv)) catch {};
         }
@@ -176,7 +177,7 @@ pub const Client = struct {
         try self.waitForTransportId();
 
         if (self.transport_id) |tid| {
-            c.blog(c.LOG_INFO, "zobscast launched Media Receiver, transportId: %s", tid.ptr);
+            c.blog(c.LOG_INFO, "zobscast launched Media Receiver, transportId: %.*s", @as(c_int, @intCast(tid.len)), tid.ptr);
 
             // Step 4: Connect to the transportId
             try self.sendJsonMessage(
@@ -201,7 +202,7 @@ pub const Client = struct {
                     .autoplay = true,
                 },
             );
-            c.blog(c.LOG_INFO, "zobscast sent media LOAD for URL: %s", stream_url.ptr);
+            c.blog(c.LOG_INFO, "zobscast sent media LOAD for URL: %.*s", @as(c_int, @intCast(stream_url.len)), stream_url.ptr);
 
             // Step 6: Start heartbeat thread
             self.heartbeat_thread = try std.Thread.spawn(.{}, heartbeatLoop, .{self});

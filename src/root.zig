@@ -1,18 +1,14 @@
 const c = @import("c");
 const std = @import("std");
 const Output = @import("Output.zig");
-const Source = @import("Source.zig");
+const gui = @import("gui.zig");
 
 const ObsFrontendEvent = CTranslateEnum(c, c_int, "OBS_FRONTEND_EVENT_");
-
-var options_source: ?*c.obs_source_t = null;
 
 export fn obs_module_load() callconv(.c) bool {
     c.blog(c.LOG_INFO, "zobscast module_load");
     c.blog(c.LOG_INFO, "zobscast obs_register_output");
     c.obs_register_output(&Output.info);
-    c.blog(c.LOG_INFO, "zobscast obs_register_source");
-    c.obs_register_source(&Source.info);
     c.blog(c.LOG_INFO, "zobscast obs_frontend_add_event_callback");
     c.obs_frontend_add_event_callback(OBSEvent, null);
     return true;
@@ -20,11 +16,6 @@ export fn obs_module_load() callconv(.c) bool {
 
 export fn obs_module_unload() callconv(.c) void {
     c.blog(c.LOG_INFO, "zobscast module_unload");
-
-    if (options_source) |s| {
-        c.obs_source_release(s);
-        options_source = null;
-    }
 
     const output = c.obs_get_output_by_name(Output.info.id);
     if (output) |out| {
@@ -38,15 +29,16 @@ export fn obs_module_unload() callconv(.c) void {
 pub fn openOptions(ctx: ?*anyopaque) callconv(.c) void {
     _ = ctx;
     c.blog(c.LOG_INFO, "zobscast openOptions");
-    if (options_source == null) {
-        const saved_settings = Output.loadSettings();
-        const settings = saved_settings orelse c.obs_data_create();
-        defer c.obs_data_release(settings);
-        Output.get_defaults(settings);
-        options_source = c.obs_source_create_private(Source.info.id, "Zobscast Settings", settings);
-    }
-    if (options_source) |s| {
-        c.obs_frontend_open_source_properties(s);
+    const output = Output.getOrCreateOutput();
+    if (output) |out| {
+        var url_buf: [128]u8 = undefined;
+        if (out.getSettingsUrl(&url_buf)) |url| {
+            gui.openSettings(url);
+        } else |err| {
+            c.blog(c.LOG_ERROR, "zobscast: failed to get settings URL: %s", @errorName(err).ptr);
+        }
+    } else {
+        c.blog(c.LOG_ERROR, "zobscast: could not get or create output for settings");
     }
 }
 
@@ -56,7 +48,6 @@ fn OBSEvent(ev: c_uint, ctx: ?*anyopaque) callconv(.c) void {
     c.blog(c.LOG_INFO, "zobscast frontend event: %u %s", ev, @tagName(evt).ptr);
     switch (evt) {
         .FINISHED_LOADING => {
-            const gui = @import("gui.zig");
             const toggle_local: [*c]const u8 = obs_module_text("Zobscast.Toggle");
             gui.addToggleAction(toggle_local, Output.toggle, null);
             const options_local: [*c]const u8 = obs_module_text("Zobscast.Options");

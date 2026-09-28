@@ -74,6 +74,7 @@ pub const Muxer = struct {
             .data_ctx = data_ctx,
             .allocator = allocator,
         };
+        errdefer self.deinit();
 
         const avio_buf_size: usize = 16 * 1024;
         self.avio_buffer = av_malloc(avio_buf_size) orelse {
@@ -210,22 +211,26 @@ pub const Muxer = struct {
     pub fn deinit(self: *Muxer) void {
         c.blog(c.LOG_INFO, "zobscast Muxer: cleaning up...");
         if (self.format_ctx) |ctx| {
-            _ = av_write_trailer(ctx);
+            if (self.header_done) {
+                _ = av_write_trailer(ctx);
+            }
+            ctx.pb = null;
+            avformat_free_context(ctx);
+            self.format_ctx = null;
         }
+
         if (self.pkt != null) {
             av_packet_free(&self.pkt);
         }
 
         if (self.avio_ctx != null) {
             avio_context_free(&self.avio_ctx);
+            self.avio_buffer = null;
+        } else if (self.avio_buffer) |buf| {
+            av_free(buf);
+            self.avio_buffer = null;
         }
 
-        if (self.format_ctx) |ctx| {
-            avformat_free_context(ctx);
-        }
-        if (self.avio_buffer) |buf| {
-            av_free(buf);
-        }
         self.header_data.deinit(self.allocator);
         self.allocator.destroy(self);
     }

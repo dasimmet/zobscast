@@ -1,5 +1,7 @@
 const c = @import("c");
 const std = @import("std");
+const root = @import("root.zig");
+const gui = @import("gui.zig");
 const Muxer = @import("ffmpeg/Muxer.zig").Muxer;
 const Server = @import("stream/Server.zig").Server;
 const Discovery = @import("cast/Discovery.zig").Discovery;
@@ -37,7 +39,7 @@ pub const info: c.obs_output_info = .{
     .encoded_video_codecs = "h264",
 };
 
-fn ensureDiscovery(self: *Output) void {
+pub fn ensureDiscovery(self: *Output) void {
     while (!self.discovery_mutex.tryLock()) {
         std.Thread.yield() catch {};
     }
@@ -60,6 +62,75 @@ pub fn deinitDiscovery(self: *Output) void {
     }
 }
 
+const ObsContextData = extern struct {
+    name: ?[*:0]u8,
+    uuid: ?[*:0]const u8,
+    data: ?*anyopaque,
+};
+
+pub fn getOutputData(out: *c.obs_output_t) ?*Output {
+    const ctx: *const ObsContextData = @ptrCast(@alignCast(out));
+    if (ctx.data) |d| {
+        return @ptrCast(@alignCast(d));
+    }
+    return null;
+}
+
+var active_instance: ?*Output = null;
+
+pub fn getOrCreateOutput() ?*Output {
+    if (active_instance) |inst| return inst;
+
+    var out = c.obs_get_output_by_name(info.id);
+    if (out == null) {
+        const saved_settings = loadSettings();
+        const settings = saved_settings orelse c.obs_data_create();
+        defer c.obs_data_release(settings);
+        get_defaults(settings);
+        out = c.obs_output_create(info.id, info.id, settings, null);
+    } else {
+        c.obs_output_release(out.?);
+    }
+
+    if (active_instance) |inst| return inst;
+
+    if (out) |o| {
+        return getOutputData(o);
+    }
+    return null;
+}
+
+fn ensureHttpServerUnlocked(self: *Output) !u16 {
+    if (self.server) |srv| {
+        if (srv.running.load(.monotonic)) {
+            return srv.port;
+        }
+    }
+
+    const srv = try Server.init(self.allocator, self);
+    self.server = srv;
+    const port = srv.start(0) catch |err| {
+        srv.deinit();
+        self.server = null;
+        return err;
+    };
+    return port;
+}
+
+pub fn ensureHttpServer(self: *Output) !u16 {
+    while (!self.mutex.tryLock()) {
+        std.Thread.yield() catch {};
+    }
+    defer self.mutex.unlock();
+
+    return self.ensureHttpServerUnlocked();
+}
+
+pub fn getSettingsUrl(self: *Output, buf: []u8) ![:0]const u8 {
+    const port = try self.ensureHttpServer();
+    return std.mem.printSentinel(buf, "http://127.0.0.1:{d}/settings", .{port}, 0);
+}
+
 pub fn cleanIp(input: []const u8) []const u8 {
     var s = std.mem.trim(u8, input, " \t\r\n");
     if (std.mem.lastIndexOfScalar(u8, s, '(')) |open_idx| {
@@ -74,7 +145,6 @@ pub fn cleanIp(input: []const u8) []const u8 {
 }
 
 pub fn getConfigPath() ?[*c]u8 {
-    const root = @import("root.zig");
     return c.obs_module_get_config_path(root.obs_current_module(), "zobscast.json");
 }
 
@@ -126,7 +196,6 @@ pub fn ensureEncoder(output: *c.obs_output_t) void {
     c.obs_data_set_string(enc_settings, "profile", "baseline");
     c.obs_data_set_int(enc_settings, "keyint_sec", 1);
     c.obs_data_set_int(enc_settings, "bf", 0);
-    c.obs_data_set_string(enc_settings, "x264opts", "sync-lookahead=0:rc-lookahead=0");
 
     const enc_id: [*c]const u8 = "obs_x264";
     const enc = c.obs_video_encoder_create(enc_id, "zobscast_enc", enc_settings, null);
@@ -203,6 +272,7 @@ fn create(settings: ?*c.struct_obs_data, ptr: ?*c.struct_obs_output) callconv(.c
         .settings = settings,
         .allocator = std.heap.c_allocator,
     };
+    active_instance = self;
 
     if (settings) |s| {
         c.obs_data_addref(s);
@@ -224,7 +294,16 @@ fn destroy(ctx: ?*anyopaque) callconv(.c) void {
     c.blog(c.LOG_INFO, "zobscast destroy");
     const self: *Output = @ptrCast(@alignCast(ctx.?));
 
+    if (active_instance == self) {
+        active_instance = null;
+    }
+
     stop(ctx, 0);
+
+    if (self.server) |srv| {
+        srv.deinit();
+        self.server = null;
+    }
 
     if (self.settings) |s| {
         c.obs_data_release(s);
@@ -245,7 +324,7 @@ fn update(ctx: ?*anyopaque, settings: ?*c.obs_data_t) callconv(.c) void {
     }
 }
 
-fn applySettings(self: *Output, settings: *c.obs_data_t) void {
+pub fn applySettings(self: *Output, settings: *c.obs_data_t) void {
     self.debug_logging = c.obs_data_get_bool(settings, "debug_logging");
     const sink_str = c.obs_data_get_string(settings, "sink");
     if (sink_str != null and sink_str[0] != 0) {
@@ -254,7 +333,7 @@ fn applySettings(self: *Output, settings: *c.obs_data_t) void {
             self.allocator.free(self.sink_ip);
         }
         self.sink_ip = self.allocator.dupe(u8, slice) catch &[_]u8{};
-        c.blog(c.LOG_INFO, "zobscast updated sink to: %s", self.sink_ip.ptr);
+        c.blog(c.LOG_INFO, "zobscast updated sink to: %.*s", @as(c_int, @intCast(self.sink_ip.len)), self.sink_ip.ptr);
     }
 }
 
@@ -471,20 +550,13 @@ fn connectThread(self: *Output) void {
 
     c.blog(c.LOG_INFO, "zobscast start: casting to %.*s (from setting '%.*s')", @as(c_int, @intCast(target_ip.len)), target_ip.ptr, @as(c_int, @intCast(raw_target.len)), raw_target.ptr);
 
-    // 1. Start HTTP Server
-    const server = Server.init(self.allocator) catch |err| {
-        c.blog(c.LOG_ERROR, "zobscast: failed to init HTTP server: %s", @errorName(err).ptr);
-        c.obs_output_signal_stop(self.ptr, c.OBS_OUTPUT_CONNECT_FAILED);
-        return;
-    };
-    self.server = server;
-    _ = server.start(0) catch |err| {
+    // 1. Ensure HTTP Server is running
+    _ = self.ensureHttpServerUnlocked() catch |err| {
         c.blog(c.LOG_ERROR, "zobscast: failed to start HTTP server: %s", @errorName(err).ptr);
-        server.deinit();
-        self.server = null;
         c.obs_output_signal_stop(self.ptr, c.OBS_OUTPUT_CONNECT_FAILED);
         return;
     };
+    const server = self.server.?;
 
     // 2. Initialize FFmpeg Muxer
     var width: u32 = c.obs_output_get_width(self.ptr);
@@ -516,8 +588,7 @@ fn connectThread(self: *Output) void {
 
     const muxer = Muxer.init(self.allocator, onMuxedData, self, width, height, extradata_slice) catch |err| {
         c.blog(c.LOG_ERROR, "zobscast: failed to initialize FFmpeg muxer: %s", @errorName(err).ptr);
-        server.deinit();
-        self.server = null;
+        server.clearClients();
         c.obs_output_signal_stop(self.ptr, c.OBS_OUTPUT_ENCODE_ERROR);
         return;
     };
@@ -543,9 +614,8 @@ fn connectThread(self: *Output) void {
     if (!c.obs_output_begin_data_capture(self.ptr, 0)) {
         c.blog(c.LOG_ERROR, "zobscast: obs_output_begin_data_capture failed");
         muxer.deinit();
-        server.deinit();
+        server.clearClients();
         self.muxer = null;
-        self.server = null;
         c.obs_output_signal_stop(self.ptr, c.OBS_OUTPUT_ENCODE_ERROR);
         return;
     }
@@ -555,9 +625,8 @@ fn connectThread(self: *Output) void {
         c.blog(c.LOG_ERROR, "zobscast: failed to init Cast client: %s", @errorName(err).ptr);
         c.obs_output_end_data_capture(self.ptr);
         muxer.deinit();
-        server.deinit();
+        server.clearClients();
         self.muxer = null;
-        self.server = null;
         c.obs_output_signal_stop(self.ptr, c.OBS_OUTPUT_CONNECT_FAILED);
         return;
     };
@@ -568,17 +637,15 @@ fn connectThread(self: *Output) void {
         c.obs_output_end_data_capture(self.ptr);
         cast_client.deinit();
         muxer.deinit();
-        server.deinit();
+        server.clearClients();
         self.cast_client = null;
         self.muxer = null;
-        self.server = null;
         c.obs_output_signal_stop(self.ptr, c.OBS_OUTPUT_CONNECT_FAILED);
         return;
     };
 
     self.active = true;
     c.blog(c.LOG_INFO, "zobscast stream live at %s", stream_url.ptr);
-    const gui = @import("gui.zig");
     gui.setActive(true);
 }
 
@@ -610,7 +677,6 @@ fn stop(ctx: ?*anyopaque, it: u64) callconv(.c) void {
     if (self.active) {
         c.obs_output_end_data_capture(self.ptr);
         self.active = false;
-        const gui = @import("gui.zig");
         gui.setActive(false);
     }
 
@@ -625,8 +691,8 @@ fn stop(ctx: ?*anyopaque, it: u64) callconv(.c) void {
     }
 
     if (self.server) |srv| {
-        srv.deinit();
-        self.server = null;
+        srv.clearClients();
+        srv.setHeader(&[_]u8{});
     }
 
     self.deinitDiscovery();
