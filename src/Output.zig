@@ -2,11 +2,11 @@ const c = @import("c");
 const std = @import("std");
 const root = @import("root.zig");
 const gui = @import("gui.zig");
-const Muxer = @import("ffmpeg/Muxer.zig").Muxer;
-const Server = @import("stream/Server.zig").Server;
-const Discovery = @import("cast/Discovery.zig").Discovery;
-const Device = @import("cast/Discovery.zig").Device;
-const CastClient = @import("cast/Client.zig").Client;
+const Muxer = @import("Muxer.zig");
+const Server = @import("Server.zig");
+const Discovery = @import("Discovery.zig").Discovery;
+const Device = @import("Discovery.zig").Device;
+const CastClient = @import("Client.zig").Client;
 const Output = @This();
 
 ptr: *c.obs_output_t,
