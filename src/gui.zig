@@ -405,10 +405,10 @@ fn openQtWebEngine(url: [:0]const u8) bool {
 
     // Resize window (optional — works even without resize support)
     if (fn_widget_resize_size) |resize_size| {
-        const sz: QSize = .{ .width = 500, .height = 620 };
+        const sz: QSize = .{ .width = 550, .height = 740 };
         resize_size(mem, &sz);
     } else if (fn_widget_resize) |resize_fn| {
-        resize_fn(mem, 500, 620);
+        resize_fn(mem, 550, 740);
     }
 
     // Load URL

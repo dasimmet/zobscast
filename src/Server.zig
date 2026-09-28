@@ -335,9 +335,16 @@ fn handleGetSettings(self: *Server, client_fd: c.SOCKET) void {
         c.obs_data_get_bool(s, "enable_audio")
     else
         true;
+    const port_val = if (out_opt) |out|
+        out.sink_port
+    else if (saved_opt) |s| blk: {
+        const p = c.obs_data_get_int(s, "port");
+        break :blk if (p > 0 and p <= 65535) @as(u16, @intCast(p)) else 8009;
+    } else 8009;
 
     const json = std.json.Stringify.valueAlloc(self.allocator, .{
         .sink = sink_str,
+        .port = port_val,
         .bitrate = if (bitrate > 0) bitrate else 2500,
         .preset = preset_str,
         .debug_logging = debug_log,
@@ -376,6 +383,8 @@ fn handleGetLocale(self: *Server, client_fd: c.SOCKET) void {
         .@"Destination.IpAddress" = root.getLocaleString("Zobscast.Destination.IpAddress", "IP Address"),
         .@"Zobscast.Destination.IpPlaceholder" = root.getLocaleString("Zobscast.Destination.IpPlaceholder", "e.g. 192.168.1.100 or device name"),
         .@"Destination.IpPlaceholder" = root.getLocaleString("Zobscast.Destination.IpPlaceholder", "e.g. 192.168.1.100 or device name"),
+        .@"Zobscast.Destination.Port" = root.getLocaleString("Zobscast.Destination.Port", "Port"),
+        .@"Destination.Port" = root.getLocaleString("Zobscast.Destination.Port", "Port"),
         .@"Zobscast.Encoding.Title" = root.getLocaleString("Zobscast.Encoding.Title", "Video & Encoding"),
         .@"Encoding.Title" = root.getLocaleString("Zobscast.Encoding.Title", "Video & Encoding"),
         .@"Zobscast.Encoding.Bitrate" = root.getLocaleString("Zobscast.Encoding.Bitrate", "Bitrate"),
@@ -473,6 +482,7 @@ fn handleScan(self: *Server, client_fd: c.SOCKET) void {
 
 const UpdateSettingsPayload = struct {
     sink: ?[]const u8 = null,
+    port: ?i64 = null,
     bitrate: ?i64 = null,
     preset: ?[]const u8 = null,
     debug_logging: ?bool = null,
@@ -506,6 +516,11 @@ fn handleUpdateSettings(self: *Server, client_fd: c.SOCKET, req_slice: []const u
             c.obs_data_set_string(settings, "sink", sz.ptr);
         } else |_| {}
     }
+    if (parsed.value.port) |p| {
+        if (p > 0 and p <= 65535) {
+            c.obs_data_set_int(settings, "port", @intCast(p));
+        }
+    }
     if (parsed.value.bitrate) |br| {
         c.obs_data_set_int(settings, "bitrate", @intCast(br));
     }
@@ -535,15 +550,15 @@ fn handleUpdateSettings(self: *Server, client_fd: c.SOCKET, req_slice: []const u
     self.sendJsonResponse(client_fd, "{\"ok\":true}");
 }
 
-/// Gets the local IPv4 address that routes towards destination_ip
-pub fn getLocalIpFor(dest_ip_str: []const u8, buf: []u8) ![]const u8 {
+/// Gets the local IPv4 address that routes towards destination_ip:dest_port
+pub fn getLocalIpFor(dest_ip_str: []const u8, dest_port: u16, buf: []u8) ![]const u8 {
     const udp_fd = c.socket(c.AF_INET, c.SOCK_DGRAM, 0);
     if (c.is_socket_valid(udp_fd) == 0) return error.SocketCreationFailed;
     defer _ = c.close(udp_fd);
 
     var dest_addr: c.sockaddr_in = std.mem.zeroes(c.sockaddr_in);
     dest_addr.sin_family = c.AF_INET;
-    dest_addr.sin_port = c.htons(8009);
+    dest_addr.sin_port = c.htons(dest_port);
 
     var ip_z: [64:0]u8 = undefined;
     const len = @min(dest_ip_str.len, 63);

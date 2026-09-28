@@ -13,6 +13,7 @@ ptr: *c.obs_output_t,
 settings: ?*c.obs_data_t = null,
 active: bool = false,
 sink_ip: []u8 = &[_]u8{},
+sink_port: u16 = 8009,
 discovery: ?Discovery = null,
 server: ?*Server = null,
 muxer: ?*Muxer = null,
@@ -134,17 +135,26 @@ pub fn getSettingsUrl(self: *Output, buf: []u8) ![:0]const u8 {
     return std.mem.printSentinel(buf, "http://127.0.0.1:{d}/settings", .{port}, 0);
 }
 
-pub fn cleanIp(input: []const u8) []const u8 {
+pub fn parseTarget(input: []const u8, default_port: u16) struct { ip: []const u8, port: u16 } {
     var s = std.mem.trim(u8, input, " \t\r\n");
     if (std.mem.lastIndexOfScalar(u8, s, '(')) |open_idx| {
         if (std.mem.indexOfScalarPos(u8, s, open_idx, ')')) |close_idx| {
             s = std.mem.trim(u8, s[open_idx + 1 .. close_idx], " \t\r\n");
         }
     }
+    var port = default_port;
     if (std.mem.indexOfScalar(u8, s, ':')) |colon_idx| {
+        const port_str = s[colon_idx + 1 ..];
+        if (std.fmt.parseInt(u16, port_str, 10)) |p| {
+            port = p;
+        } else |_| {}
         s = s[0..colon_idx];
     }
-    return s;
+    return .{ .ip = s, .port = port };
+}
+
+pub fn cleanIp(input: []const u8) []const u8 {
+    return parseTarget(input, 8009).ip;
 }
 
 pub fn getConfigPath() ?[*c]u8 {
@@ -374,20 +384,26 @@ pub fn applySettings(self: *Output, settings: *c.obs_data_t) void {
     self.debug_logging = c.obs_data_get_bool(settings, "debug_logging");
     self.enable_video = c.obs_data_get_bool(settings, "enable_video");
     self.enable_audio = c.obs_data_get_bool(settings, "enable_audio");
+    const port_val = c.obs_data_get_int(settings, "port");
+    if (port_val > 0 and port_val <= 65535) {
+        self.sink_port = @intCast(port_val);
+    }
     const sink_str = c.obs_data_get_string(settings, "sink");
     if (sink_str != null and sink_str[0] != 0) {
-        const slice = std.mem.span(sink_str);
+        const parsed = parseTarget(std.mem.span(sink_str), self.sink_port);
         if (self.sink_ip.len > 0) {
             self.allocator.free(self.sink_ip);
         }
-        self.sink_ip = self.allocator.dupe(u8, slice) catch &[_]u8{};
-        std.log.info("zobscast updated sink to: {s}", .{self.sink_ip});
+        self.sink_ip = self.allocator.dupe(u8, parsed.ip) catch &[_]u8{};
+        self.sink_port = parsed.port;
+        std.log.info("zobscast updated sink to: {s}:{d}", .{ self.sink_ip, self.sink_port });
     }
 }
 
 pub fn get_defaults(settings: ?*c.obs_data_t) callconv(.c) void {
     std.log.info("zobscast get_defaults", .{});
     c.obs_data_set_default_string(settings, "sink", "");
+    c.obs_data_set_default_int(settings, "port", 8009);
     c.obs_data_set_default_int(settings, "bitrate", 2500);
     c.obs_data_set_default_string(settings, "preset", "ultrafast");
     c.obs_data_set_default_string(settings, "rate_control", "CRF");
@@ -430,6 +446,15 @@ pub fn get_properties(ctx: ?*anyopaque) callconv(.c) ?*c.obs_properties_t {
         "refresh_devices",
         "Scan for Devices",
         refreshClicked,
+    );
+
+    _ = c.obs_properties_add_int(
+        props,
+        "port",
+        "Cast Port",
+        1,
+        65535,
+        1,
     );
 
     _ = c.obs_properties_add_int(
@@ -582,12 +607,18 @@ fn connectThread(self: *Output) void {
         }
     }
 
-    // Determine target IP
+    // Determine target IP and port
     var raw_target: []const u8 = self.sink_ip;
+    var target_port: u16 = self.sink_port;
+
     if (raw_target.len == 0 and self.settings != null) {
         const s = c.obs_data_get_string(self.settings.?, "sink");
         if (s != null and s[0] != 0) {
             raw_target = std.mem.span(s);
+        }
+        const p = c.obs_data_get_int(self.settings.?, "port");
+        if (p > 0 and p <= 65535) {
+            target_port = @intCast(p);
         }
     }
 
@@ -601,19 +632,23 @@ fn connectThread(self: *Output) void {
             }
             if (disc.devices.items.len > 0) {
                 raw_target = disc.devices.items[0].ip;
+                target_port = disc.devices.items[0].port;
             }
             disc.mutex.unlock();
         }
     }
 
-    const target_ip = cleanIp(raw_target);
+    const parsed_target = parseTarget(raw_target, target_port);
+    const target_ip = parsed_target.ip;
+    target_port = parsed_target.port;
+
     if (target_ip.len == 0) {
         std.log.err("zobscast: no cast sink selected! Open Output properties to select or enter a device IP.", .{});
         c.obs_output_signal_stop(self.ptr, c.OBS_OUTPUT_BAD_PATH);
         return;
     }
 
-    std.log.info("zobscast start: casting to {s} (from setting '{s}')", .{ target_ip, raw_target });
+    std.log.info("zobscast start: casting to {s}:{d} (from setting '{s}')", .{ target_ip, target_port, raw_target });
 
     // 1. Ensure HTTP Server is running
     _ = self.ensureHttpServerUnlocked() catch |err| {
@@ -708,7 +743,14 @@ fn connectThread(self: *Output) void {
 
     // 4. Resolve local IP address facing destination
     var ip_buf: [64]u8 = undefined;
-    const local_ip = Server.getLocalIpFor(target_ip, &ip_buf) catch "127.0.0.1";
+    const local_ip = Server.getLocalIpFor(target_ip, target_port, &ip_buf) catch |err| {
+        std.log.err("zobscast: failed to get local Ip For Client : {s} {}", .{ target_ip, err });
+        muxer.deinit();
+        server.clearClients();
+        self.muxer = null;
+        c.obs_output_signal_stop(self.ptr, c.OBS_OUTPUT_CONNECT_FAILED);
+        return;
+    };
 
     var url_buf: [256]u8 = undefined;
     const stream_url = std.mem.printSentinel(
@@ -730,7 +772,7 @@ fn connectThread(self: *Output) void {
     }
 
     // 6. Connect CastClient and request playback
-    const cast_client = Client.init(self.allocator, target_ip, 8009) catch |err| {
+    const cast_client = Client.init(self.allocator, target_ip, target_port) catch |err| {
         std.log.err("zobscast: failed to init Cast client: {}", .{err});
         c.obs_output_end_data_capture(self.ptr);
         muxer.deinit();

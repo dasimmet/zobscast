@@ -40,6 +40,7 @@ async function loadTranslations() {
 // Form state & baseline
 let savedSettings = {
   sink: '',
+  port: 8009,
   bitrate: 2500,
   preset: 'ultrafast',
   debug_logging: false,
@@ -52,6 +53,7 @@ let lastStatusData = null;
 function getCurrentFormValues() {
   return {
     sink: (document.getElementById('sinkInput').value || '').trim(),
+    port: parseInt(document.getElementById('portInput').value, 10) || 8009,
     bitrate: parseInt(document.getElementById('bitrateInput').value, 10) || 2500,
     preset: document.getElementById('presetSelect').value || 'ultrafast',
     debug_logging: !!document.getElementById('debugLog').checked,
@@ -72,6 +74,7 @@ function isFormDirty() {
   if (!hasLoadedInitialSettings) return false;
   const current = getCurrentFormValues();
   return current.sink !== savedSettings.sink ||
+    current.port !== savedSettings.port ||
     current.bitrate !== savedSettings.bitrate ||
     current.preset !== savedSettings.preset ||
     current.debug_logging !== savedSettings.debug_logging ||
@@ -92,7 +95,7 @@ function updateSaveButton() {
 
 function isAnyFieldFocused() {
   const activeId = document.activeElement ? document.activeElement.id : null;
-  return ['sinkInput', 'bitrateInput', 'presetSelect', 'debugLog', 'enableVideo', 'enableAudio', 'deviceSelect'].includes(activeId);
+  return ['sinkInput', 'portInput', 'bitrateInput', 'presetSelect', 'debugLog', 'enableVideo', 'enableAudio', 'deviceSelect'].includes(activeId);
 }
 
 // Data fetching & UI updates
@@ -136,8 +139,10 @@ function updateDeviceList(devices) {
   sel.innerHTML = `<option value="">${t('Destination.Choose', '-- Choose Discovered Device --')}</option>`;
   devices.forEach(d => {
     const opt = document.createElement('option');
-    opt.value = d.ip + ':' + d.port;
-    opt.textContent = d.name + ' (' + d.ip + ':' + d.port + ')';
+    opt.value = d.ip;
+    opt.dataset.ip = d.ip;
+    opt.dataset.port = d.port || 8009;
+    opt.textContent = d.name + ' (' + d.ip + ':' + (d.port || 8009) + ')';
     sel.appendChild(opt);
   });
 }
@@ -163,6 +168,7 @@ function updateUI(data) {
   // Never overwrite user inputs if the user has changed values or is currently editing
   if (!hasLoadedInitialSettings || (!isFormDirty() && !isAnyFieldFocused())) {
     document.getElementById('sinkInput').value = data.sink || '';
+    document.getElementById('portInput').value = data.port || 8009;
     document.getElementById('bitrateInput').value = data.bitrate || 2500;
     document.getElementById('presetSelect').value = data.preset || 'ultrafast';
     document.getElementById('debugLog').checked = !!data.debug_logging;
@@ -171,6 +177,7 @@ function updateUI(data) {
 
     savedSettings = {
       sink: (data.sink || '').trim(),
+      port: data.port || 8009,
       bitrate: data.bitrate || 2500,
       preset: data.preset || 'ultrafast',
       debug_logging: !!data.debug_logging,
@@ -219,7 +226,7 @@ function showToast(msg) {
 }
 
 // Event Listeners
-['sinkInput', 'bitrateInput', 'presetSelect', 'debugLog', 'enableVideo', 'enableAudio'].forEach(id => {
+['sinkInput', 'portInput', 'bitrateInput', 'presetSelect', 'debugLog', 'enableVideo', 'enableAudio'].forEach(id => {
   const el = document.getElementById(id);
   if (!el) return;
   el.addEventListener('input', () => {
@@ -232,9 +239,26 @@ function showToast(msg) {
   });
 });
 
+document.getElementById('sinkInput').addEventListener('change', (e) => {
+  const val = (e.target.value || '').trim();
+  const colonIdx = val.lastIndexOf(':');
+  if (colonIdx > 0) {
+    const possiblePort = parseInt(val.slice(colonIdx + 1), 10);
+    if (!isNaN(possiblePort) && possiblePort > 0 && possiblePort <= 65535) {
+      e.target.value = val.slice(0, colonIdx).trim();
+      document.getElementById('portInput').value = possiblePort;
+      updateSaveButton();
+    }
+  }
+});
+
 document.getElementById('deviceSelect').addEventListener('change', (e) => {
-  if (e.target.value) {
-    document.getElementById('sinkInput').value = e.target.value;
+  const opt = e.target.selectedOptions ? e.target.selectedOptions[0] : null;
+  if (opt && opt.dataset.ip) {
+    document.getElementById('sinkInput').value = opt.dataset.ip;
+    if (opt.dataset.port) {
+      document.getElementById('portInput').value = opt.dataset.port;
+    }
     updateSaveButton();
   }
 });

@@ -9,7 +9,6 @@
 
 ## Features
 
-- **Zero external dependencies** — no `ffmpeg` binary, no `mkchromecast`, no FIFOs, no shell scripts.
 - **Native Chromecast (CastV2) protocol** — TLS control channel on port 8009, protobuf wire framing, Default Media Receiver launch and media load, async heartbeat.
 - **Automatic device discovery** — multicast DNS (`_googlecast._tcp.local`) finds Cast devices and shows friendly names.
 - **In-memory fragmented MP4 muxer** — uses embedded FFmpeg libraries for live H.264 + AAC streaming without any temporary files.
