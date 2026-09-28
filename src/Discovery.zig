@@ -1,5 +1,4 @@
 const std = @import("std");
-const c = @import("c");
 
 pub const Device = struct {
     name: []const u8,
@@ -26,36 +25,26 @@ pub const Device = struct {
 pub const Discovery = @This();
 devices: std.ArrayListUnmanaged(Device) = .empty,
 allocator: std.mem.Allocator,
+io: std.Io,
 mutex: std.atomic.Mutex = .unlocked,
 
-pub fn init(allocator: std.mem.Allocator) Discovery {
+pub fn init(allocator: std.mem.Allocator, io: std.Io) Discovery {
     return .{
         .allocator = allocator,
+        .io = io,
     };
 }
 
-pub fn scan(self: *Discovery, timeout_ms: c_int) !void {
-    const sock = c.socket(c.AF_INET, c.SOCK_DGRAM, 0);
-    if (c.is_socket_valid(sock) == 0) return error.SocketCreationFailed;
-    defer _ = c.close(sock);
+pub fn scan(self: *Discovery, timeout_ms: i64) !void {
+    if (timeout_ms <= 0) return;
 
-    var reuse: c_int = 1;
-    _ = c.setsockopt(sock, c.SOL_SOCKET, c.SO_REUSEADDR, @ptrCast(&reuse), @sizeOf(c_int));
-
-    var bind_addr: c.sockaddr_in = std.mem.zeroes(c.sockaddr_in);
-    bind_addr.sin_family = c.AF_INET;
-    bind_addr.sin_port = 0; // ephemeral port for sending query
-    c.set_inaddr_any(&bind_addr);
-
-    if (c.bind(sock, @ptrCast(&bind_addr), @sizeOf(c.sockaddr_in)) < 0) {
-        return error.BindFailed;
-    }
+    const io = self.io;
+    const bind_addr: std.Io.net.IpAddress = .{ .ip4 = .unspecified(0) };
+    const socket = try bind_addr.bind(io, .{ .mode = .dgram });
+    defer socket.close(io);
 
     // Target mDNS multicast address 224.0.0.251:5353
-    var mdns_addr: c.sockaddr_in = std.mem.zeroes(c.sockaddr_in);
-    mdns_addr.sin_family = c.AF_INET;
-    mdns_addr.sin_port = c.htons(5353);
-    _ = c.inet_pton(c.AF_INET, "224.0.0.251", &mdns_addr.sin_addr);
+    const mdns_addr = try std.Io.net.IpAddress.parse("224.0.0.251", 5353);
 
     // Build standard mDNS query for _googlecast._tcp.local (PTR)
     const query_data = [_]u8{
@@ -82,44 +71,31 @@ pub fn scan(self: *Discovery, timeout_ms: c_int) !void {
         0x00, 0x01, // QClass: IN = 1
     };
 
-    _ = c.sendto(
-        sock,
-        &query_data,
-        query_data.len,
-
-        0,
-        @ptrCast(&mdns_addr),
-        @sizeOf(c.sockaddr_in),
-    );
+    socket.send(io, &mdns_addr, &query_data) catch {};
 
     // Receive responses with timeout
-    const start_time = getMilliTime();
+    const deadline = std.Io.Timestamp.now(io, .awake)
+        .addDuration(std.Io.Duration.fromMilliseconds(timeout_ms))
+        .withClock(.awake);
     var recv_buf: [4096]u8 = undefined;
 
     while (true) {
-        const elapsed = getMilliTime() - start_time;
-        const remaining = timeout_ms - @as(c_int, @intCast(@max(0, elapsed)));
-        if (remaining <= 0) break;
+        const message = socket.receiveTimeout(io, &recv_buf, .{ .deadline = deadline }) catch |err| switch (err) {
+            error.Timeout => break,
+            else => return err,
+        };
 
-        var pfd = [_]c.pollfd{.{
-            .fd = sock,
-            .events = c.POLLIN,
-            .revents = 0,
-        }};
-        const poll_res = c.poll(&pfd, 1, remaining);
-        if (poll_res <= 0) break;
-
-        var src_addr: c.sockaddr_in = std.mem.zeroes(c.sockaddr_in);
-        var src_len: c.socklen_t = @sizeOf(c.sockaddr_in);
-        const n = c.recvfrom(sock, &recv_buf, recv_buf.len, 0, @ptrCast(&src_addr), &src_len);
-        if (n <= 0) continue;
-
-        var ip_str_buf: [c.INET_ADDRSTRLEN]u8 = undefined;
-        if (c.inet_ntop(c.AF_INET, &src_addr.sin_addr, &ip_str_buf, c.INET_ADDRSTRLEN) == null) continue;
-        const ip_len = std.mem.indexOfScalar(u8, &ip_str_buf, 0) orelse ip_str_buf.len;
-        const sender_ip = ip_str_buf[0..ip_len];
-
-        self.parseMdnsPacket(recv_buf[0..@intCast(n)], sender_ip) catch {};
+        var sender_ip_buf: [16]u8 = undefined;
+        const sender_ip = switch (message.from) {
+            .ip4 => |address| try std.fmt.bufPrint(&sender_ip_buf, "{d}.{d}.{d}.{d}", .{
+                address.bytes[0],
+                address.bytes[1],
+                address.bytes[2],
+                address.bytes[3],
+            }),
+            .ip6 => continue,
+        };
+        self.parseMdnsPacket(message.data, sender_ip) catch {};
     }
 }
 
@@ -272,8 +248,4 @@ pub fn deinit(self: *Discovery) void {
     }
     self.devices.deinit(self.allocator);
     self.mutex.unlock();
-}
-
-fn getMilliTime() i64 {
-    return @intCast(@divTrunc(c.os_gettime_ns(), 1_000_000));
 }

@@ -51,7 +51,7 @@ pub fn ensureDiscovery(self: *Output) void {
     defer self.discovery_mutex.unlock();
 
     if (self.discovery == null) {
-        self.discovery = Discovery.init(std.heap.c_allocator);
+        self.discovery = Discovery.init(std.heap.c_allocator, self.threaded_io.io());
     }
 }
 

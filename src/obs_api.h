@@ -188,39 +188,6 @@ EXPORT void obs_register_source_s(const struct obs_source_info *info,
                                   size_t size);
 #define obs_register_source(info)                                              \
   obs_register_source_s(info, sizeof(struct obs_source_info))
-
-/* Cross-platform network & timing headers */
 #ifdef _WIN32
 #include <windows.h>
-#include <winsock2.h>
-#include <ws2tcpip.h>
-typedef int socklen_t;
-typedef intptr_t ssize_t;
-#ifndef MSG_NOSIGNAL
-#define MSG_NOSIGNAL 0
-#endif
-#define poll(fds, nfds, timeout)                                               \
-  WSAPoll((LPWSAPOLLFD)(fds), (ULONG)(nfds), (INT)(timeout))
-static inline int posix_close(intptr_t fd) { return closesocket((SOCKET)fd); }
-#define close(fd) posix_close((intptr_t)(fd))
-#define INVALID_SOCKET_VALUE INVALID_SOCKET
-static inline int is_socket_valid(SOCKET s) { return s != INVALID_SOCKET; }
-#else
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <poll.h>
-#include <sys/socket.h>
-#include <time.h>
-#include <unistd.h>
-#ifndef MSG_NOSIGNAL
-#define MSG_NOSIGNAL 0
-#endif
-typedef int SOCKET;
-#define INVALID_SOCKET_VALUE (-1)
-static inline int is_socket_valid(SOCKET s) { return s >= 0; }
-#endif
-
-static inline void set_inaddr_any(struct sockaddr_in *addr) {
-  addr->sin_addr.s_addr = INADDR_ANY;
-}
+#endif // _WIN32
