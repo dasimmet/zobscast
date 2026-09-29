@@ -14,6 +14,7 @@ session_id: ?[]const u8 = null,
 heartbeat_future: ?std.Io.Future(void) = null,
 tls_client: ?*std.crypto.tls.Client = null,
 stream: ?std.Io.net.Stream = null,
+debug_logging: bool = false,
 
 // Buffers for TLS and network I/O
 socket_write_buf: [4096]u8 = undefined,
@@ -244,10 +245,12 @@ fn sendMessage(
         const raw_msg = try encodeCastMessage(self.allocator, src, dst, ns, payload);
         defer self.allocator.free(raw_msg);
 
-        std.log.info("zobscast CastV2 tx: ns='{s}' payload='{s}'", .{
-            ns,
-            payload[0..@min(payload.len, 200)],
-        });
+        if (self.debug_logging) {
+            std.log.info("zobscast CastV2 tx: ns='{s}' payload='{s}'", .{
+                ns,
+                payload[0..@min(payload.len, 200)],
+            });
+        }
         _ = try tls.writer.write(raw_msg);
         try tls.writer.flush();
         if (self.stream_writer) |*sw| {

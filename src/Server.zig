@@ -22,6 +22,7 @@ io: std.Io,
 header_data: std.ArrayListUnmanaged(u8) = .empty,
 header_mutex: std.Io.Mutex = .init,
 output: ?*Output = null,
+debug_logging: bool = false,
 
 pub fn init(allocator: std.mem.Allocator, output: ?*Output, io: std.Io) !*Server {
     const self = try allocator.create(Server);
@@ -133,7 +134,9 @@ fn handleClient(self: *Server, stream: std.Io.net.Stream) void {
     const method = parts.next() orelse "";
     const path = parts.next() orelse "";
 
-    std.log.info("zobscast HTTP: {s} {s}", .{ method, path });
+    if (self.debug_logging) {
+        std.log.info("zobscast HTTP: {s} {s}", .{ method, path });
+    }
 
     // CORS preflight
     if (std.mem.eql(u8, method, "OPTIONS")) {
@@ -168,7 +171,9 @@ fn handleClient(self: *Server, stream: std.Io.net.Stream) void {
             self.header_mutex.lockUncancelable(self.io);
             if (self.header_data.items.len > 0) {
                 _ = writeStream(stream, self.io, self.header_data.items);
-                std.log.info("zobscast HTTP: client connected, sent init header ({d} bytes)", .{self.header_data.items.len});
+                std.log.info("zobscast HTTP: client connected, sent init header ({d} bytes)", .{
+                    self.header_data.items.len,
+                });
             } else {
                 std.log.warn("zobscast HTTP: client connected before init header was ready", .{});
             }

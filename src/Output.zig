@@ -390,6 +390,13 @@ fn update(ctx: ?*anyopaque, settings: ?*c.obs_data_t) callconv(.c) void {
 
 pub fn applySettings(self: *Output, settings: *c.obs_data_t) void {
     self.debug_logging = c.obs_data_get_bool(settings, "debug_logging");
+    if (self.cast_client) |client| {
+        client.debug_logging = self.debug_logging;
+    }
+    if (self.server) |server| {
+        server.debug_logging = self.debug_logging;
+    }
+
     self.enable_video = c.obs_data_get_bool(settings, "enable_video");
     self.enable_audio = c.obs_data_get_bool(settings, "enable_audio");
     const port_val = c.obs_data_get_int(settings, "port");
@@ -409,7 +416,6 @@ pub fn applySettings(self: *Output, settings: *c.obs_data_t) void {
 }
 
 pub fn get_defaults(settings: ?*c.obs_data_t) callconv(.c) void {
-    std.log.info("zobscast get_defaults", .{});
     c.obs_data_set_default_string(settings, "sink", "");
     c.obs_data_set_default_int(settings, "port", 8009);
     c.obs_data_set_default_int(settings, "bitrate", 2500);
