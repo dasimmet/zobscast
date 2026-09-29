@@ -26,7 +26,7 @@ pub const Discovery = @This();
 devices: std.ArrayListUnmanaged(Device) = .empty,
 allocator: std.mem.Allocator,
 io: std.Io,
-mutex: std.atomic.Mutex = .unlocked,
+mutex: std.Io.Mutex = .init,
 
 pub fn init(allocator: std.mem.Allocator, io: std.Io) Discovery {
     return .{
@@ -206,10 +206,8 @@ fn skipDnsName(packet: []const u8, start_offset: usize) usize {
 }
 
 fn addDevice(self: *Discovery, dev: Device) !void {
-    while (!self.mutex.tryLock()) {
-        std.Thread.yield() catch {};
-    }
-    defer self.mutex.unlock();
+    self.mutex.lockUncancelable(self.io);
+    defer self.mutex.unlock(self.io);
 
     // Check if device with same IP already exists
     for (self.devices.items) |existing| {
@@ -228,10 +226,8 @@ fn addDevice(self: *Discovery, dev: Device) !void {
 }
 
 pub fn getDevices(self: *Discovery, allocator: std.mem.Allocator, out: *std.ArrayList(Device)) !void {
-    while (!self.mutex.tryLock()) {
-        std.Thread.yield() catch {};
-    }
-    defer self.mutex.unlock();
+    try self.mutex.lock(self.io);
+    defer self.mutex.unlock(self.io);
 
     for (self.devices.items) |d| {
         const dev_clone = try d.clone(allocator);
@@ -240,12 +236,10 @@ pub fn getDevices(self: *Discovery, allocator: std.mem.Allocator, out: *std.Arra
 }
 
 pub fn deinit(self: *Discovery) void {
-    while (!self.mutex.tryLock()) {
-        std.Thread.yield() catch {};
-    }
+    self.mutex.lockUncancelable(self.io);
     for (self.devices.items) |d| {
         d.deinit(self.allocator);
     }
     self.devices.deinit(self.allocator);
-    self.mutex.unlock();
+    self.mutex.unlock(self.io);
 }

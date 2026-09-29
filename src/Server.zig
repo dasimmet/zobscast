@@ -14,12 +14,13 @@ listener: ?std.Io.net.Server = null,
 port: u16 = 0,
 running: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 clients: std.ArrayListUnmanaged(std.Io.net.Stream) = .empty,
-client_mutex: std.atomic.Mutex = .unlocked,
-thread: ?std.Thread = null,
+client_mutex: std.Io.Mutex = .init,
+client_tasks: std.Io.Group = .init,
+accept_future: ?std.Io.Future(void) = null,
 allocator: std.mem.Allocator,
 io: std.Io,
 header_data: std.ArrayListUnmanaged(u8) = .empty,
-header_mutex: std.atomic.Mutex = .unlocked,
+header_mutex: std.Io.Mutex = .init,
 output: ?*Output = null,
 
 pub fn init(allocator: std.mem.Allocator, output: ?*Output, io: std.Io) !*Server {
@@ -51,7 +52,7 @@ pub fn start(self: *Server, preferred_port: u16) !u16 {
     self.listener = listener;
     self.running.store(true, .monotonic);
 
-    self.thread = std.Thread.spawn(.{}, acceptLoop, .{self}) catch |err| {
+    self.accept_future = io.concurrent(acceptLoop, .{self}) catch |err| {
         listener.socket.close(io);
         self.listener = null;
         self.running.store(false, .monotonic);
@@ -62,20 +63,16 @@ pub fn start(self: *Server, preferred_port: u16) !u16 {
     return self.port;
 }
 
-pub fn setHeader(self: *Server, header: []const u8) void {
-    while (!self.header_mutex.tryLock()) {
-        std.Thread.yield() catch {};
-    }
-    defer self.header_mutex.unlock();
+pub fn setHeader(self: *Server, header: []const u8) !void {
+    try self.header_mutex.lock(self.io);
+    defer self.header_mutex.unlock(self.io);
     self.header_data.clearRetainingCapacity();
-    self.header_data.appendSlice(self.allocator, header) catch {};
+    try self.header_data.appendSlice(self.allocator, header);
 }
 
 pub fn broadcast(self: *Server, data: []const u8) void {
-    while (!self.client_mutex.tryLock()) {
-        std.Thread.yield() catch {};
-    }
-    defer self.client_mutex.unlock();
+    self.client_mutex.lockUncancelable(self.io);
+    defer self.client_mutex.unlock(self.io);
 
     var i: usize = 0;
     while (i < self.clients.items.len) {
@@ -90,10 +87,8 @@ pub fn broadcast(self: *Server, data: []const u8) void {
 }
 
 pub fn clearClients(self: *Server) void {
-    while (!self.client_mutex.tryLock()) {
-        std.Thread.yield() catch {};
-    }
-    defer self.client_mutex.unlock();
+    self.client_mutex.lockUncancelable(self.io);
+    defer self.client_mutex.unlock(self.io);
 
     for (self.clients.items) |stream| {
         stream.close(self.io);
@@ -112,7 +107,7 @@ fn acceptLoop(self: *Server) void {
             break;
         }
 
-        _ = std.Thread.spawn(.{}, handleClient, .{ self, stream }) catch {
+        self.client_tasks.concurrent(self.io, handleClient, .{ self, stream }) catch {
             stream.close(self.io);
         };
     }
@@ -170,27 +165,23 @@ fn handleClient(self: *Server, stream: std.Io.net.Stream) void {
 
         // Send initialization header (ftyp + moov) if available
         {
-            while (!self.header_mutex.tryLock()) {
-                std.Thread.yield() catch {};
-            }
+            self.header_mutex.lockUncancelable(self.io);
             if (self.header_data.items.len > 0) {
                 _ = writeStream(stream, self.io, self.header_data.items);
                 std.log.info("zobscast HTTP: client connected, sent init header ({d} bytes)", .{self.header_data.items.len});
             } else {
                 std.log.warn("zobscast HTTP: client connected before init header was ready", .{});
             }
-            self.header_mutex.unlock();
+            self.header_mutex.unlock(self.io);
         }
 
         // Register client to receive subsequent fragments
         {
-            while (!self.client_mutex.tryLock()) {
-                std.Thread.yield() catch {};
-            }
+            self.client_mutex.lockUncancelable(self.io);
             self.clients.append(self.allocator, stream) catch {
                 stream.close(self.io);
             };
-            self.client_mutex.unlock();
+            self.client_mutex.unlock(self.io);
         }
         return;
     }
@@ -555,10 +546,12 @@ pub fn stop(self: *Server) void {
         } else |_| {}
     }
 
-    if (self.thread) |t| {
-        t.join();
-        self.thread = null;
+    if (self.accept_future) |*future| {
+        _ = future.await(self.io);
+        self.accept_future = null;
     }
+
+    self.client_tasks.cancel(self.io);
 
     if (self.listener) |listener| {
         listener.socket.close(self.io);

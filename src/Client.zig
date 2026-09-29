@@ -11,7 +11,7 @@ io: std.Io,
 running: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 transport_id: ?[]const u8 = null,
 session_id: ?[]const u8 = null,
-heartbeat_thread: ?std.Thread = null,
+heartbeat_future: ?std.Io.Future(void) = null,
 tls_client: ?*std.crypto.tls.Client = null,
 stream: ?std.Io.net.Stream = null,
 
@@ -158,7 +158,7 @@ pub fn startCast(self: *Client, stream_url: []const u8) !void {
         std.log.info("zobscast sent media LOAD for URL: {s}", .{stream_url});
 
         // Step 6: Start heartbeat thread
-        self.heartbeat_thread = try std.Thread.spawn(.{}, heartbeatLoop, .{self});
+        self.heartbeat_future = try self.io.concurrent(heartbeatLoop, .{self});
     } else {
         return error.NoTransportId;
     }
@@ -489,9 +489,9 @@ pub fn stop(self: *Client) void {
         ) catch {};
     }
 
-    if (self.heartbeat_thread) |t| {
-        t.join();
-        self.heartbeat_thread = null;
+    if (self.heartbeat_future) |*future| {
+        _ = future.cancel(self.io);
+        self.heartbeat_future = null;
     }
 
     if (self.tls_client) |tls| {

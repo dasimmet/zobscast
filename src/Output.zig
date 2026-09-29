@@ -18,9 +18,9 @@ discovery: ?Discovery = null,
 server: ?*Server = null,
 muxer: ?*Muxer = null,
 cast_client: ?*Client = null,
-connect_thread: ?std.Thread = null,
-mutex: std.atomic.Mutex = .unlocked,
-discovery_mutex: std.atomic.Mutex = .unlocked,
+connect_future: ?std.Io.Future(void) = null,
+mutex: std.Io.Mutex = .init,
+discovery_mutex: std.Io.Mutex = .init,
 debug_logging: bool = false,
 enable_video: bool = true,
 enable_audio: bool = true,
@@ -45,21 +45,22 @@ pub const info: c.obs_output_info = .{
 };
 
 pub fn ensureDiscovery(self: *Output) void {
-    while (!self.discovery_mutex.tryLock()) {
-        std.Thread.yield() catch {};
-    }
-    defer self.discovery_mutex.unlock();
+    const io = self.threaded_io.io();
+    self.discovery_mutex.lockUncancelable(io);
+    defer self.discovery_mutex.unlock(io);
 
     if (self.discovery == null) {
-        self.discovery = Discovery.init(std.heap.c_allocator, self.threaded_io.io());
+        self.discovery = Discovery.init(
+            self.allocator,
+            io,
+        );
     }
 }
 
 pub fn deinitDiscovery(self: *Output) void {
-    while (!self.discovery_mutex.tryLock()) {
-        std.Thread.yield() catch {};
-    }
-    defer self.discovery_mutex.unlock();
+    const io = self.threaded_io.io();
+    self.discovery_mutex.lockUncancelable(io);
+    defer self.discovery_mutex.unlock(io);
 
     if (self.discovery) |*disc| {
         disc.deinit();
@@ -112,7 +113,12 @@ fn ensureHttpServerUnlocked(self: *Output) !u16 {
         }
     }
 
-    const srv = try Server.init(self.allocator, self, self.threaded_io.io());
+    const srv = try Server.init(
+        self.allocator,
+        self,
+        self.threaded_io.io(),
+    );
+
     self.server = srv;
     const port = srv.start(0) catch |err| {
         srv.deinit();
@@ -123,10 +129,9 @@ fn ensureHttpServerUnlocked(self: *Output) !u16 {
 }
 
 pub fn ensureHttpServer(self: *Output) !u16 {
-    while (!self.mutex.tryLock()) {
-        std.Thread.yield() catch {};
-    }
-    defer self.mutex.unlock();
+    const io = self.threaded_io.io();
+    try self.mutex.lock(io);
+    defer self.mutex.unlock(io);
 
     return self.ensureHttpServerUnlocked();
 }
@@ -555,10 +560,13 @@ fn start(ctx: ?*anyopaque) callconv(.c) bool {
     std.log.info("zobscast start", .{});
     const self: *Output = @ptrCast(@alignCast(ctx.?));
 
-    while (!self.mutex.tryLock()) {
-        std.Thread.yield() catch {};
+    const io = self.threaded_io.io();
+    if (self.connect_future) |*future| {
+        _ = future.await(io);
+        self.connect_future = null;
     }
-    defer self.mutex.unlock();
+    self.mutex.lock(io) catch return false;
+    defer self.mutex.unlock(io);
 
     if (self.active) return true;
 
@@ -579,15 +587,7 @@ fn start(ctx: ?*anyopaque) callconv(.c) bool {
         return false;
     }
 
-    // Join any leftover thread from a previous start
-    if (self.connect_thread) |t| {
-        t.join();
-        self.connect_thread = null;
-    }
-
-    // Spawn the connection thread — network connection and begin_data_capture
-    // happen in this background thread.
-    self.connect_thread = std.Thread.spawn(.{}, connectThread, .{self}) catch |err| {
+    self.connect_future = io.concurrent(connectTask, .{self}) catch |err| {
         std.log.err("zobscast: failed to spawn connect thread: {}", .{err});
         c.obs_output_signal_stop(self.ptr, c.OBS_OUTPUT_CONNECT_FAILED);
         return false;
@@ -595,11 +595,10 @@ fn start(ctx: ?*anyopaque) callconv(.c) bool {
     return true;
 }
 
-fn connectThread(self: *Output) void {
-    while (!self.mutex.tryLock()) {
-        std.Thread.yield() catch {};
-    }
-    defer self.mutex.unlock();
+fn connectTask(self: *Output) void {
+    const io = self.threaded_io.io();
+    self.mutex.lockUncancelable(io);
+    defer self.mutex.unlock(io);
 
     // If sink_ip is still empty, try loading from saved settings
     if (self.sink_ip.len == 0) {
@@ -630,14 +629,12 @@ fn connectThread(self: *Output) void {
         self.ensureDiscovery();
         if (self.discovery) |*disc| {
             disc.scan(1000) catch {};
-            while (!disc.mutex.tryLock()) {
-                std.Thread.yield() catch {};
-            }
+            disc.mutex.lockUncancelable(disc.io);
             if (disc.devices.items.len > 0) {
                 raw_target = disc.devices.items[0].ip;
                 target_port = disc.devices.items[0].port;
             }
-            disc.mutex.unlock();
+            disc.mutex.unlock(disc.io);
         }
     }
 
@@ -742,7 +739,14 @@ fn connectThread(self: *Output) void {
     self.muxer = muxer;
 
     // 3. Set initialization header
-    server.setHeader(muxer.getHeader());
+    server.setHeader(muxer.getHeader()) catch |err| {
+        std.log.err("zobscast: failed to set HTTP stream header: {}", .{err});
+        muxer.deinit();
+        server.clearClients();
+        self.muxer = null;
+        c.obs_output_signal_stop(self.ptr, c.OBS_OUTPUT_ENCODE_ERROR);
+        return;
+    };
 
     // 4. Resolve local IP address facing destination
     var ip_buf: [64]u8 = undefined;
@@ -821,17 +825,15 @@ fn stop(ctx: ?*anyopaque, it: u64) callconv(.c) void {
     std.log.info("zobscast stop", .{});
     const self: *Output = @ptrCast(@alignCast(ctx.?));
 
-    // Wait for any in-progress connection attempt to finish.
-    // Must NOT hold self.mutex while joining — connectThread also locks it.
-    if (self.connect_thread) |t| {
-        t.join();
-        self.connect_thread = null;
+    // Wait for any in-progress connection task before acquiring self.mutex.
+    if (self.connect_future) |*future| {
+        _ = future.await(self.threaded_io.io());
+        self.connect_future = null;
     }
 
-    while (!self.mutex.tryLock()) {
-        std.Thread.yield() catch {};
-    }
-    defer self.mutex.unlock();
+    const io = self.threaded_io.io();
+    self.mutex.lockUncancelable(io);
+    defer self.mutex.unlock(io);
 
     if (self.active) {
         c.obs_output_end_data_capture(self.ptr);
@@ -851,7 +853,7 @@ fn stop(ctx: ?*anyopaque, it: u64) callconv(.c) void {
 
     if (self.server) |srv| {
         srv.clearClients();
-        srv.setHeader(&[_]u8{});
+        srv.setHeader(&[_]u8{}) catch {};
     }
 
     self.deinitDiscovery();
