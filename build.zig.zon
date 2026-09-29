@@ -1,6 +1,6 @@
 .{
     .name = .zobscast,
-    .version = "0.0.2",
+    .version = "0.0.3",
     .minimum_zig_version = "0.17.0-dev.2320+1e770dbef",
     .fingerprint = 0xedfe3c995eb92b07,
     .dependencies = .{
