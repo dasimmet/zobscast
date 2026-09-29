@@ -783,7 +783,7 @@ fn connectTask(self: *Output) void {
         self.allocator,
         target_ip,
         target_port,
-        self.threaded_io.io(),
+        io,
     ) catch |err| {
         std.log.err("zobscast: failed to init Cast client: {}", .{err});
         c.obs_output_end_data_capture(self.ptr);
@@ -824,14 +824,14 @@ fn stop(ctx: ?*anyopaque, it: u64) callconv(.c) void {
     _ = it;
     std.log.info("zobscast stop", .{});
     const self: *Output = @ptrCast(@alignCast(ctx.?));
+    const io = self.threaded_io.io();
 
     // Wait for any in-progress connection task before acquiring self.mutex.
     if (self.connect_future) |*future| {
-        _ = future.await(self.threaded_io.io());
+        _ = future.await(io);
         self.connect_future = null;
     }
 
-    const io = self.threaded_io.io();
     self.mutex.lockUncancelable(io);
     defer self.mutex.unlock(io);
 
