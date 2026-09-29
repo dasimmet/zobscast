@@ -5,8 +5,8 @@
     .fingerprint = 0xedfe3c995eb92b07,
     .dependencies = .{
         .obs = .{
-            .url = "git+https://github.com/obsproject/obs-studio.git?ref=32.2.2#ba2f32bdf791005443988a4955e963663e16b1ed",
-            .hash = "N-V-__8AAEgtVQKSZtUOj_bsYB9SJAkRiw-vMD9y9ldLqAJU",
+            .url = "git+https://github.com/obsproject/obs-studio.git?ref=30.2.3#144599fbff18e348652ccadfc3ca08794a03d970",
+            .hash = "N-V-__8AAOklRQJExM4c0jouwOrj-EKppXKGSIob6jzAyTXv",
         },
         .ffmpeg = .{
             .url = "git+https://github.com/dasimmet/ffmpeg?ref=zobscast#6e0652889cad80e56668ea252ee683e27f5591b4",

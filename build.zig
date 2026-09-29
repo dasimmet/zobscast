@@ -13,7 +13,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     c_head.addIncludePath(b.path("src/include"));
-    c_head.addIncludePath(obs.path("frontend/api"));
+    c_head.addIncludePath(obs.path("UI/obs-frontend-api"));
     c_head.addIncludePath(obs.path("libobs"));
     const obsconfig = b.addConfigHeader(.{
         .style = .{ .cmake = obs.path("libobs/obsconfig.h.in") },
@@ -71,7 +71,7 @@ pub fn build(b: *std.Build) void {
             b.graph.zig_exe, "dlltool", "-m", machine_flag, "-d",
         });
         dlltool_obs.addFileArg(b.path("src/windows/obs.def"));
-        dlltool_obs.addArgs(&.{ "-l" });
+        dlltool_obs.addArgs(&.{"-l"});
         const obs_lib = dlltool_obs.addOutputFileArg("obs.lib");
         dlltool_obs.addArgs(&.{ "-D", "obs.dll" });
         lib.root_module.addObjectFile(obs_lib);
@@ -80,7 +80,7 @@ pub fn build(b: *std.Build) void {
             b.graph.zig_exe, "dlltool", "-m", machine_flag, "-d",
         });
         dlltool_fe.addFileArg(b.path("src/windows/obs-frontend-api.def"));
-        dlltool_fe.addArgs(&.{ "-l" });
+        dlltool_fe.addArgs(&.{"-l"});
         const obs_fe_lib = dlltool_fe.addOutputFileArg("obs-frontend-api.lib");
         dlltool_fe.addArgs(&.{ "-D", "obs-frontend-api.dll" });
         lib.root_module.addObjectFile(obs_fe_lib);
