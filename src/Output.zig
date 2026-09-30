@@ -25,6 +25,7 @@ debug_logging: bool = false,
 enable_video: bool = true,
 enable_audio: bool = true,
 packet_count: usize = 0,
+gpa: std.heap.DebugAllocator(.{}),
 allocator: std.mem.Allocator,
 threaded_io: std.Io.Threaded,
 
@@ -332,9 +333,14 @@ fn create(settings: ?*c.struct_obs_data, ptr: ?*c.struct_obs_output) callconv(.c
     self.* = .{
         .ptr = ptr.?,
         .settings = settings,
-        .allocator = std.heap.c_allocator,
-        .threaded_io = std.Io.Threaded.init(std.heap.c_allocator, .{}),
+        .gpa = .{
+            .backing_allocator = std.heap.c_allocator,
+        },
+        .allocator = undefined,
+        .threaded_io = undefined,
     };
+    self.allocator = self.gpa.allocator();
+    self.threaded_io = std.Io.Threaded.init(self.allocator, .{});
     active_instance = self;
 
     if (settings) |s| {
@@ -376,7 +382,8 @@ fn destroy(ctx: ?*anyopaque) callconv(.c) void {
         self.allocator.free(self.sink_ip);
     }
 
-    self.allocator.destroy(self);
+    std.debug.assert(self.gpa.deinit() == .ok);
+    std.heap.c_allocator.destroy(self);
     std.log.info("zobscast destroy finished", .{});
 }
 
@@ -521,10 +528,10 @@ pub fn get_properties(ctx: ?*anyopaque) callconv(.c) ?*c.obs_properties_t {
 
         var dev_list: std.ArrayList(Device) = .empty;
         defer {
-            for (dev_list.items) |d| d.deinit(std.heap.c_allocator);
-            dev_list.deinit(std.heap.c_allocator);
+            for (dev_list.items) |d| d.deinit(self.allocator);
+            dev_list.deinit(self.allocator);
         }
-        disc.getDevices(std.heap.c_allocator, &dev_list) catch {};
+        disc.getDevices(self.allocator, &dev_list) catch {};
 
         for (dev_list.items) |d| {
             var label_buf: [256]u8 = undefined;
