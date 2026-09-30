@@ -1,19 +1,58 @@
 const std = @import("std");
 
+pub const Discovery = @This();
+
+devices: std.ArrayListUnmanaged(Device) = .empty,
+allocator: std.mem.Allocator,
+io: std.Io,
+mutex: std.Io.Mutex = .init,
+
 pub const Device = struct {
     name: []const u8,
     ip: []const u8,
     port: u16,
+    status: ?bool = null,
     model: []const u8,
+    capabilities: Capabilities,
 
     pub fn clone(self: Device, allocator: std.mem.Allocator) !Device {
         return .{
             .name = try allocator.dupe(u8, self.name),
             .ip = try allocator.dupe(u8, self.ip),
             .port = self.port,
+            .capabilities = self.capabilities,
             .model = try allocator.dupe(u8, self.model),
         };
     }
+
+    pub const Capabilities = packed struct(u32) {
+        video: u1,
+        audio: u1,
+        audio_group: u1,
+        audio_high_res: u1,
+        uhd: u1,
+
+        // Middle bit fields used by modern Cast/Nest frameworks
+        bit_5: bool, // Bit 5
+        bit_6: bool, // Bit 6
+        bit_7: bool, // Bit 7
+        bit_8: bool, // Bit 8
+        bit_9: bool, // Bit 9  (0x00200) - Active (1)
+        bit_10: bool, // Bit 10
+        bit_11: bool, // Bit 11
+        bit_12: bool, // Bit 12 (0x01000) - Active (1)
+        bit_13: bool, // Bit 13
+        bit_14: bool, // Bit 14
+        bit_15: bool, // Bit 15
+        bit_16: bool, // Bit 16
+        bit_17: bool, // Bit 17
+        bit_18: bool, // Bit 18 (0x40000) - Active (1)
+
+        // Remainder padding to satisfy the u32 constraint perfectly
+        padding: u13, // 19 defined bits + 13 padding bits = 32
+
+        pub const none: Capabilities = @bitCast(@as(u32, 0));
+    };
 
     pub fn deinit(self: Device, allocator: std.mem.Allocator) void {
         allocator.free(self.name);
@@ -22,11 +61,13 @@ pub const Device = struct {
     }
 };
 
-pub const Discovery = @This();
-devices: std.ArrayListUnmanaged(Device) = .empty,
-allocator: std.mem.Allocator,
-io: std.Io,
-mutex: std.Io.Mutex = .init,
+const Record = struct {
+    pub const Type = enum(u16) {
+        A = 1,
+        TXT = 16,
+        SRV = 33,
+    };
+};
 
 pub fn init(allocator: std.mem.Allocator, io: std.Io) Discovery {
     return .{
@@ -119,6 +160,7 @@ fn parseMdnsPacket(self: *Discovery, packet: []const u8, sender_ip: []const u8) 
     var model_name: ?[]const u8 = null;
     var device_ip: ?[]const u8 = null;
     var port: u16 = 8009;
+    var capabilities: Device.Capabilities = .none;
 
     var ip_buf: [16]u8 = undefined;
 
@@ -139,40 +181,49 @@ fn parseMdnsPacket(self: *Discovery, packet: []const u8, sender_ip: []const u8) 
         if (offset + rdlength > packet.len) break;
         const rdata = packet[offset .. offset + rdlength];
 
-        switch (rtype) {
-            1 => { // A record (IPv4 address)
-                if (rdlength == 4) {
-                    const formatted = std.fmt.bufPrint(&ip_buf, "{d}.{d}.{d}.{d}", .{
-                        rdata[0], rdata[1], rdata[2], rdata[3],
-                    }) catch null;
-                    if (formatted) |ip| {
-                        device_ip = ip;
+        if (std.enums.fromInt(Record.Type, rtype)) |recordtype| {
+            std.log.info("mdns message: {}", .{recordtype});
+            switch (recordtype) {
+                .A => { // (IPv4 address)
+                    if (rdlength == 4) {
+                        const formatted = std.fmt.bufPrint(&ip_buf, "{d}.{d}.{d}.{d}", .{
+                            rdata[0], rdata[1], rdata[2], rdata[3],
+                        }) catch null;
+                        if (formatted) |ip| {
+                            device_ip = ip;
+                        }
                     }
-                }
-            },
-            16 => { // TXT record
-                var txt_off: usize = 0;
-                while (txt_off < rdata.len) {
-                    const txt_len = rdata[txt_off];
-                    txt_off += 1;
-                    if (txt_off + txt_len > rdata.len) break;
-                    const entry = rdata[txt_off .. txt_off + txt_len];
-                    txt_off += txt_len;
+                },
+                .TXT => {
+                    var txt_off: usize = 0;
+                    while (txt_off < rdata.len) {
+                        const txt_len = rdata[txt_off];
+                        txt_off += 1;
+                        if (txt_off + txt_len > rdata.len) break;
+                        const entry = rdata[txt_off .. txt_off + txt_len];
+                        std.log.info("mdns TXT: {s}", .{entry});
+                        txt_off += txt_len;
 
-                    if (std.mem.startsWith(u8, entry, "fn=")) {
-                        friendly_name = entry[3..];
-                    } else if (std.mem.startsWith(u8, entry, "md=")) {
-                        model_name = entry[3..];
+                        if (std.mem.startsWith(u8, entry, "fn=")) {
+                            friendly_name = entry[3..];
+                        } else if (std.mem.startsWith(u8, entry, "ca=")) {
+                            if (std.fmt.parseInt(u32, entry[3..], 10)) |cap_int| {
+                                capabilities = @bitCast(cap_int);
+                            } else |err| {
+                                std.log.err("mdns cap parse error: {s} {}", .{ entry[3..], err });
+                            }
+                        } else if (std.mem.startsWith(u8, entry, "md=")) {
+                            model_name = entry[3..];
+                        }
                     }
-                }
-            },
-            33 => { // SRV record
-                if (rdlength >= 6) {
-                    port = std.mem.readInt(u16, rdata[4..][0..2], .big);
-                }
-            },
-
-            else => {},
+                },
+                .SRV => {
+                    if (rdlength >= 6) {
+                        port = std.mem.readInt(u16, rdata[4..][0..2], .big);
+                        std.log.info("mdns SRV: {d} {s}", .{ port, rdata[6..] });
+                    }
+                },
+            }
         }
 
         offset += rdlength;
@@ -186,6 +237,7 @@ fn parseMdnsPacket(self: *Discovery, packet: []const u8, sender_ip: []const u8) 
         .name = effective_name,
         .ip = effective_ip,
         .port = port,
+        .capabilities = capabilities,
         .model = effective_model,
     }) catch {};
 }
@@ -206,6 +258,7 @@ fn skipDnsName(packet: []const u8, start_offset: usize) usize {
 }
 
 fn addDevice(self: *Discovery, dev: Device) !void {
+    std.log.info("device: {f}", .{std.json.fmt(dev, .{ .whitespace = .minified })});
     self.mutex.lockUncancelable(self.io);
     defer self.mutex.unlock(self.io);
 
